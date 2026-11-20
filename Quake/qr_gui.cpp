@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <climits>
 #include <cmath>
@@ -31,6 +32,7 @@ namespace
 
 QrInstance   g_instance      = 0;
 QrMaterial   g_font_material = QR_NO_MATERIAL;
+void        *g_font_data     = nullptr;
 constexpr int   kOverlayFontSizeCount = 10;
 constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
 ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
@@ -64,10 +66,93 @@ bool         g_frame_open    = false;
 bool         g_custom_cursor = false;
 unsigned int g_last_frame_id = 0xFFFFFFFFu;
 
+SDL_threadID g_main_thread_id = 0;
+bool         g_sdl_frame_prepared = false;
+bool         g_saw_input_event_since_prepare = false;
+
+std::string  g_clipboard_read_cache;
+bool         g_clipboard_has_cache = false;
+std::string  g_clipboard_write_text;
+bool         g_clipboard_write_pending = false;
+bool         g_clipboard_synced_for_input = false;
+
+SDL_Rect     g_ime_rect = { 0, 0, 0, 0 };
+bool         g_ime_rect_pending = false;
+
 int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
 
 char   g_notify[256] = "";
 double g_notify_time = -1000.0;
+
+float  g_canvas_x = 0.0f;
+float  g_canvas_y = 0.0f;
+int    g_disabled_depth = 0;
+
+void ResetOverlayState (void);
+
+void RefreshClipboardReadCache (void)
+{
+	if (SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	if (SDL_HasClipboardText ())
+	{
+		char *clip = SDL_GetClipboardText ();
+		if (clip)
+		{
+			g_clipboard_read_cache = clip;
+			g_clipboard_has_cache = true;
+			SDL_free (clip);
+			return;
+		}
+	}
+
+	g_clipboard_read_cache.clear ();
+	g_clipboard_has_cache = false;
+}
+
+void FlushDeferredPlatformRequests (void)
+{
+	if (SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	if (g_clipboard_write_pending)
+	{
+		SDL_SetClipboardText (g_clipboard_write_text.c_str ());
+		g_clipboard_write_pending = false;
+	}
+
+	if (g_ime_rect_pending)
+	{
+		SDL_SetTextInputRect (&g_ime_rect);
+		g_ime_rect_pending = false;
+	}
+}
+
+const char *QrGuiGetClipboardText (ImGuiContext *)
+{
+	return g_clipboard_has_cache ? g_clipboard_read_cache.c_str () : nullptr;
+}
+
+void QrGuiSetClipboardText (ImGuiContext *, const char *text)
+{
+	g_clipboard_write_text = text ? text : "";
+	g_clipboard_write_pending = true;
+	g_clipboard_read_cache = g_clipboard_write_text;
+	g_clipboard_has_cache = true;
+}
+
+void QrGuiSetImeData (ImGuiContext *, ImGuiViewport *, ImGuiPlatformImeData *data)
+{
+	if (!data || !data->WantVisible)
+		return;
+
+	g_ime_rect.x = (int)data->InputPos.x;
+	g_ime_rect.y = (int)data->InputPos.y;
+	g_ime_rect.w = 1;
+	g_ime_rect.h = (int)data->InputLineHeight;
+	g_ime_rect_pending = true;
+}
 
 struct TextureBrowserFolder
 {
@@ -383,7 +468,10 @@ void DrawMouseCursor (void)
 void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size)
 {
 	if (g_ready || sdl_window == NULL || qr_instance == NULL)
+	{
+		free (font_data);
 		return;
+	}
 
 	IMGUI_CHECKVERSION ();
 	ImGui::CreateContext ();
@@ -398,31 +486,80 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 	if (!ImGui_ImplSDL2_InitForOther ((SDL_Window *)sdl_window))
 	{
 		fprintf (stderr, "qr gui: SDL2 backend init failed\n");
+		free (font_data);
 		ImGui::DestroyContext (); // the context is created before the backend
 		return;
 	}
 
-	ImFont *font = nullptr;
-	if (font_data && font_size > 0)
-	{
-		ImFontConfig stats_config;
-		stats_config.FontDataOwnedByAtlas = false;
+	g_main_thread_id = SDL_ThreadID ();
+	g_sdl_frame_prepared = false;
+	g_saw_input_event_since_prepare = false;
 
-		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f);
+	// Disable SDL2 gamepad polling inside ImGui_ImplSDL2_NewFrame and route all
+	// platform callbacks through main-thread-deferred caches so SCR_DrawGUI on
+	// a worker thread never invokes main-thread-only SDL2 APIs.
+	ImGui_ImplSDL2_SetGamepadMode (ImGui_ImplSDL2_GamepadMode_Manual, nullptr, 0);
 
-		for (int i = 0; i < kOverlayFontSizeCount; i++)
-			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i], &stats_config);
-	}
+	ImGuiPlatformIO &platform_io = ImGui::GetPlatformIO ();
+	platform_io.Platform_GetClipboardTextFn = QrGuiGetClipboardText;
+	platform_io.Platform_SetClipboardTextFn = QrGuiSetClipboardText;
+	platform_io.Platform_ClipboardUserData = nullptr;
+	platform_io.Platform_SetImeDataFn = QrGuiSetImeData;
+	platform_io.Platform_OpenInShellFn = nullptr;
+
 	for (int i = 0; i < kOverlayFontSizeCount; i++)
-		g_stats_mono_fonts[i] = QrGuiAddMonoFont (io.Fonts, kOverlayFontSizes[i]);
+	{
+		g_stats_fonts[i] = nullptr;
+		g_stats_mono_fonts[i] = nullptr;
+	}
+	g_font_data = nullptr;
+
+	const bool had_font_input = (font_data != nullptr && font_size > 0);
+	const bool prev_error_assert = io.ConfigErrorRecoveryEnableAssert;
+	const bool prev_error_tooltip = io.ConfigErrorRecoveryEnableTooltip;
+	io.ConfigErrorRecoveryEnableAssert = false;
+	io.ConfigErrorRecoveryEnableTooltip = false;
+
+	ImFont *font = nullptr;
+	if (font_data && font_size > 100)
+	{
+		ImFontConfig font_config;
+		font_config.FontDataOwnedByAtlas = false;
+
+		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f, &font_config);
+		if (font)
+		{
+			g_font_data = font_data;
+			for (int i = 0; i < kOverlayFontSizeCount; i++)
+				g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (g_font_data, font_size, kOverlayFontSizes[i], &font_config);
+		}
+		else
+		{
+			free (font_data);
+			font_data = nullptr;
+		}
+	}
+	else if (font_data)
+	{
+		free (font_data);
+		font_data = nullptr;
+	}
+
 	if (!font)
 	{
 		ImFontConfig cfg;
 		cfg.SizePixels = 19.0f;
 		font = io.Fonts->AddFontDefault (&cfg);
-		if (font_data && font_size > 0)
+		if (had_font_input)
 			fprintf (stderr, "qr gui: cannot load the font, using the default font\n");
 	}
+	io.FontDefault = font;
+
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+		g_stats_mono_fonts[i] = QrGuiAddMonoFont (io.Fonts, kOverlayFontSizes[i]);
+
+	io.ConfigErrorRecoveryEnableAssert = prev_error_assert;
+	io.ConfigErrorRecoveryEnableTooltip = prev_error_tooltip;
 
 	g_instance = (QrInstance)qr_instance;
 
@@ -464,6 +601,8 @@ void QR_GUI_Shutdown (void)
 	if (!g_ready)
 		return;
 
+	FlushDeferredPlatformRequests ();
+
 	// the font atlas is the bridge's own material and outlives the context
 	if (g_font_material != QR_NO_MATERIAL && g_instance)
 	{
@@ -473,7 +612,94 @@ void QR_GUI_Shutdown (void)
 
 	ImGui_ImplSDL2_Shutdown ();
 	ImGui::DestroyContext ();
+
+	free (g_font_data);
+	g_font_data = nullptr;
+
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+	{
+		g_stats_fonts[i] = nullptr;
+		g_stats_mono_fonts[i] = nullptr;
+	}
+
+	g_instance = 0;
 	g_ready = false;
+	g_frame_open = false;
+	g_custom_cursor = false;
+	g_last_frame_id = 0xFFFFFFFFu;
+	g_main_thread_id = 0;
+	g_sdl_frame_prepared = false;
+	g_saw_input_event_since_prepare = false;
+
+	g_clipboard_read_cache.clear ();
+	g_clipboard_has_cache = false;
+	g_clipboard_write_text.clear ();
+	g_clipboard_write_pending = false;
+	g_clipboard_synced_for_input = false;
+	g_ime_rect = { 0, 0, 0, 0 };
+	g_ime_rect_pending = false;
+
+	g_fb_x = g_fb_y = g_fb_w = g_fb_h = g_drawable_h = 0;
+	g_notify[0] = '\0';
+	g_notify_time = -1000.0;
+	g_canvas_x = 0.0f;
+	g_canvas_y = 0.0f;
+	g_disabled_depth = 0;
+
+	g_texbrowser_active = false;
+	g_texbrowser_rebuild = true;
+	g_texbrowser_filter[0] = '\0';
+	g_texbrowser_current.clear ();
+	g_texbrowser_folders.clear ();
+	g_texbrowser_item_folder.clear ();
+	g_texbrowser_visible.clear ();
+	g_texbrowser_revision = 0;
+	g_texbrowser_count = -1;
+	g_texbrowser_folder = -1;
+	g_texbrowser_selected = -1;
+	g_texbrowser_focus_filter = false;
+	g_texbrowser_focus_window = false;
+
+	g_verts.clear ();
+	g_indices.clear ();
+	ResetOverlayState ();
+}
+
+void QR_GUI_PrepareMainThreadFrame (float dt)
+{
+	if (!g_ready || g_frame_open || SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	FlushDeferredPlatformRequests ();
+
+	ImGuiIO &io = ImGui::GetIO ();
+	if (io.WantTextInput)
+	{
+		if (!g_clipboard_synced_for_input)
+		{
+			RefreshClipboardReadCache ();
+			g_clipboard_synced_for_input = true;
+		}
+	}
+	else
+	{
+		g_clipboard_synced_for_input = false;
+	}
+
+	// If the previous frame prepared SDL state without starting an ImGui frame
+	// and no user events arrived since then, discard any fallback mouse-pos
+	// events added by ImGui_ImplSDL2_NewFrame so InputEventsQueue cannot grow
+	// unboundedly during normal non-GUI gameplay.
+	if (g_sdl_frame_prepared && !g_saw_input_event_since_prepare)
+	{
+		if (ImGuiContext *ctx = ImGui::GetCurrentContext ())
+			ctx->InputEventsQueue.resize (0);
+	}
+
+	ImGui_ImplSDL2_NewFrame ();
+	io.DeltaTime = dt > 0.0f ? dt : (1.0f / 60.0f);
+	g_sdl_frame_prepared = true;
+	g_saw_input_event_since_prepare = false;
 }
 
 int QR_GUI_BeginFrame (unsigned int frame_id, float dt, int x, int y, int width, int height, int drawable_height)
@@ -488,7 +714,15 @@ int QR_GUI_BeginFrame (unsigned int frame_id, float dt, int x, int y, int width,
 	g_fb_h = height;
 	g_drawable_h = drawable_height;
 
-	ImGui_ImplSDL2_NewFrame ();
+	// Single-threaded / headless callers that skip QR_GUI_PrepareMainThreadFrame
+	// still run SDL2 frame prep when on the main thread; worker threads never
+	// touch SDL2 platform APIs.
+	if (!g_sdl_frame_prepared && SDL_ThreadID () == g_main_thread_id)
+	{
+		FlushDeferredPlatformRequests ();
+		ImGui_ImplSDL2_NewFrame ();
+	}
+	g_sdl_frame_prepared = false;
 
 	ImGuiIO &io = ImGui::GetIO ();
 	io.DisplaySize = ImVec2 ((float)width, (float)height);
@@ -521,7 +755,29 @@ int QR_GUI_ProcessEvent (const void *sdl_event)
 
 	const SDL_Event *e = (const SDL_Event *)sdl_event;
 
+	if (SDL_ThreadID () == g_main_thread_id)
+	{
+		if (e->type == SDL_WINDOWEVENT && e->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+		{
+			FlushDeferredPlatformRequests ();
+			RefreshClipboardReadCache ();
+		}
+		else if (e->type == SDL_KEYDOWN)
+		{
+			const Uint16 mod = e->key.keysym.mod;
+			const bool   paste_shortcut =
+			    ((mod & (KMOD_CTRL | KMOD_GUI)) != 0 && e->key.keysym.sym == SDLK_v) ||
+			    ((mod & KMOD_SHIFT) != 0 && e->key.keysym.sym == SDLK_INSERT);
+			if (paste_shortcut)
+			{
+				FlushDeferredPlatformRequests ();
+				RefreshClipboardReadCache ();
+			}
+		}
+	}
+
 	ImGui_ImplSDL2_ProcessEvent (e);
+	g_saw_input_event_since_prepare = true;
 
 	switch (e->type)
 	{
@@ -610,9 +866,6 @@ void QR_GUI_EndDialog (void)
 {
 	ImGui::End ();
 }
-
-static float g_canvas_x;
-static float g_canvas_y;
 
 int QR_GUI_Canvas (const char *id, float width, float height, float *out_x, float *out_y)
 {
@@ -898,6 +1151,8 @@ float QR_GUI_TextWidth (const char *text)
 
 int QR_GUI_CtrlDown (void)
 {
+	if (!g_ready)
+		return 0;
 	return ImGui::GetIO ().KeyCtrl ? 1 : 0;
 }
 
@@ -1883,8 +2138,6 @@ int QR_GUI_ResetButton (const char *label, int enabled)
 	return pressed ? 1 : 0;
 }
 
-static int g_disabled_depth = 0;
-
 void QR_GUI_PushDisabled (int disabled)
 {
 	if (!disabled)
@@ -2061,6 +2314,8 @@ void QR_GUI_PopID (void)
 
 int QR_GUI_AnyItemActive (void)
 {
+	if (!g_ready)
+		return 0;
 	return ImGui::IsAnyItemActive () ? 1 : 0;
 }
 
@@ -2636,6 +2891,8 @@ int QR_GUI_Dialog (const char *title, const char *text, const char *yes, const c
 
 void QR_GUI_Notify (const char *text)
 {
+	if (!g_ready)
+		return;
 	snprintf (g_notify, sizeof (g_notify), "%s", text ? text : "");
 	g_notify_time = ImGui::GetTime ();
 }
@@ -2817,6 +3074,15 @@ void QR_GUI_LabelBottomRight (const char *text)
 // gizmo).
 void QR_GUI_GetMousePos (float *x, float *y)
 {
+	if (!g_ready)
+	{
+		if (x)
+			*x = 0.0f;
+		if (y)
+			*y = 0.0f;
+		return;
+	}
+
 	const ImVec2 pos = ImGui::GetIO ().MousePos;
 
 	if (x)
@@ -2878,6 +3144,17 @@ ImFont *g_overlay_mono_font = nullptr;
 
 bool g_overlay_group = false;
 bool g_overlay_first = true;
+
+void ResetOverlayState (void)
+{
+	g_overlay_scale = 1.0f;
+	g_overlay_font_size = kOverlayBaseFont;
+	g_overlay_font = nullptr;
+	g_overlay_mono_size = kOverlayBaseFont;
+	g_overlay_mono_font = nullptr;
+	g_overlay_group = false;
+	g_overlay_first = true;
+}
 
 void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const float *v, int n, ImU32 col)
 {

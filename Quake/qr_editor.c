@@ -69,6 +69,35 @@
 #include <math.h>
 #include <stdarg.h>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4505)
+#elif defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#define STBI_NO_BMP
+#define STBI_NO_PSD
+#define STBI_NO_GIF
+#define STBI_NO_HDR
+#define STBI_NO_PIC
+#define STBI_NO_PNM
+#define STBI_NO_LINEAR
+#define STBI_NO_STDIO
+#define STBI_MALLOC(sz)        Mem_Alloc (sz)
+#define STBI_REALLOC(p, newsz) Mem_Realloc (p, newsz)
+#define STBI_FREE(p)           Mem_Free (p)
+#include "stb_image.h"
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#elif defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 extern vec3_t     vpn, vright, vup, r_origin; // gl_rmain.c
 extern qboolean   keydown[MAX_KEYS];          // keys.c
 extern kbutton_t  in_forward, in_back, in_moveleft, in_moveright, in_up, in_down; // cl_input.c
@@ -317,22 +346,30 @@ static struct
 	qboolean      frame_backup_is_brush;
 	qboolean      frame_backup_valid;
 
-	// snapshot of both material lists for Cancel/Exit
+	// snapshot of both material lists: applied checkpoint (Cancel / per-param
+	// Reset) and disk baseline (Exit -> No / Discard, taken once on mode start)
 	rt_material_t *snap_global;
 	int            snap_global_count;
 	rt_material_t *snap_map;
 	int            snap_map_count;
+	rt_material_t *snap_disk_global;
+	int            snap_disk_global_count;
+	rt_material_t *snap_disk_map;
+	int            snap_disk_map_count;
 
 	// snapshot of the light overrides, and the light names the session touched
 	rt_light_t *snap_lights;
 	int         snap_light_count;
+	rt_light_t *snap_disk_lights;
+	int         snap_disk_light_count;
 	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int         light_touched_count;
+	int         applied_light_touched_count;
 
-	// snapshot of the custom lights and the fog that was in effect (its color
-	// and its density): the Custom tab and the Global tab edit the live state
-	// without marking anything, so this is what Cancel/Exit restore and what
-	// QRE_CustomTouched compares to
+	// snapshot of the custom lights and the fog that was in effect (its color,
+	// density and enabled flag): the Custom tab and the Global tab edit the
+	// live state without marking anything, so the applied checkpoint drives
+	// Cancel/Reset/QRE_CustomTouched while the disk baseline drives Discard.
 	rt_custom_light_t snap_custom[RT_CUSTOM_LIGHTS_MAX];
 	int               snap_custom_count;
 	// live index -> snapshot index, -1 for a light added in this session: a
@@ -340,6 +377,12 @@ static struct
 	int               snap_custom_map[RT_CUSTOM_LIGHTS_MAX];
 	float             snap_fog_color[3];
 	float             snap_fog_density;
+	qboolean          snap_fog_enabled;
+	rt_custom_light_t snap_disk_custom[RT_CUSTOM_LIGHTS_MAX];
+	int               snap_disk_custom_count;
+	float             snap_disk_fog_color[3];
+	float             snap_disk_fog_density;
+	qboolean          snap_disk_fog_enabled;
 
 	// the light editor: the light the crosshair is over, and the one selected
 	// (the panel edits the entry of the selected light's emitter)
@@ -437,6 +480,8 @@ static struct
 	qboolean regen_prompt;
 	qboolean regen_pending;
 	qboolean force_write;
+	qboolean has_applied;
+	qboolean applied_wrote_config;
 	qboolean prompt_from_flying;
 
 	// the pause state the editor found, restored when it closes
@@ -455,8 +500,9 @@ static struct
 	int     dirty_count;
 	char    touched[QRE_TOUCHED_MAX][MAX_QPATH];
 	int     touched_count;
+	int     applied_touched_count;
 
-	char    texture_error_text[MAX_QPATH];
+	char    texture_error_text[MAX_OSPATH];
 	char    texture_error_reason[64];
 	int     texture_error_group;
 	int     texture_error_param;
@@ -613,20 +659,30 @@ static void     QRE_StopEditor (qboolean restore);
 static void     QRE_ClosePanel (void);
 static void     QRE_RequestExit (void);
 static void     QRE_StartMode (int mode);
+static void     QRE_BackToChooser (void);
 static void     QRE_ResetAll (void);
 static void     QRE_RegenerateLights (void);
-static void     QRE_GlobalsRestore (void);
+static void     QRE_GlobalsRestore (qboolean to_disk);
 static qboolean QRE_GlobalsTouched (void);
+enum
+{
+	QRE_WRITE_EMPTY = 0, // nothing left to persist (valid no-op; stale editor_file removed)
+	QRE_WRITE_WROTE = 1, // session file written cleanly
+	QRE_WRITE_ERROR = -1 // real filesystem / I/O failure
+};
+
 static qboolean QRE_SkyTouched (void);
-static qboolean QRE_WriteSession (void);
+static int      QRE_WriteSession (void);
 static qboolean QRE_FileExists (const char *path);
 static void     QRE_SessionSave (void);
 static void     QRE_SessionDiscard (void);
 static void     QRE_ClearSessionState (void);
-static void     QRE_ResetAll (void);
 static void     QRE_CancelLightDrag (void);
 static void     QRE_UpdateLightDrag (void);
 static void     QRE_CustomGizmoCancel (void);
+static void     QRE_HostSetFogEnabled (qboolean enabled);
+static void     QRE_ResetActions (void);
+static void     QRE_PreviewPump (void);
 static void     QRE_QueueTexture (int g, int p, const char *value);
 static void     QRE_OpenTextureBrowser (int g, int p);
 static qboolean QRE_TextureBrowserHasName (const char *name);
@@ -713,7 +769,7 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 // Material snapshot (for Cancel/Exit)
 // ---------------------------------------------------------------------------
 
-static void QRE_TakeSnapshot (void)
+static void QRE_TakeSnapshot (qboolean take_disk)
 {
 	int count;
 
@@ -722,22 +778,44 @@ static void QRE_TakeSnapshot (void)
 	if (!qre.snap_global)
 		qre.snap_global = (rt_material_t *)Mem_Alloc (RT_MAT_CAP_GLOBAL * sizeof (rt_material_t));
 	memcpy (qre.snap_global, RT_MAT_GetList (RT_MAT_LIST_GLOBAL, NULL), (size_t)count * sizeof (rt_material_t));
+	if (take_disk)
+	{
+		qre.snap_disk_global_count = count;
+		if (!qre.snap_disk_global)
+			qre.snap_disk_global = (rt_material_t *)Mem_Alloc (RT_MAT_CAP_GLOBAL * sizeof (rt_material_t));
+		memcpy (qre.snap_disk_global, qre.snap_global, (size_t)count * sizeof (rt_material_t));
+	}
 
 	RT_MAT_GetList (RT_MAT_LIST_MAP, &count);
 	qre.snap_map_count = count;
 	if (!qre.snap_map)
 		qre.snap_map = (rt_material_t *)Mem_Alloc (RT_MAT_CAP_MAP * sizeof (rt_material_t));
 	memcpy (qre.snap_map, RT_MAT_GetList (RT_MAT_LIST_MAP, NULL), (size_t)count * sizeof (rt_material_t));
+	if (take_disk)
+	{
+		qre.snap_disk_map_count = count;
+		if (!qre.snap_disk_map)
+			qre.snap_disk_map = (rt_material_t *)Mem_Alloc (RT_MAT_CAP_MAP * sizeof (rt_material_t));
+		memcpy (qre.snap_disk_map, qre.snap_map, (size_t)count * sizeof (rt_material_t));
+	}
 }
 
-static void QRE_RestoreSnapshot (void)
+static void QRE_RestoreSnapshot (qboolean to_disk)
 {
-	memcpy (RT_MAT_GetList (RT_MAT_LIST_GLOBAL, NULL), qre.snap_global, (size_t)qre.snap_global_count * sizeof (rt_material_t));
-	memcpy (RT_MAT_GetList (RT_MAT_LIST_MAP, NULL), qre.snap_map, (size_t)qre.snap_map_count * sizeof (rt_material_t));
+	const rt_material_t *global_src = to_disk ? qre.snap_disk_global : qre.snap_global;
+	const int            global_cnt = to_disk ? qre.snap_disk_global_count : qre.snap_global_count;
+	const rt_material_t *map_src = to_disk ? qre.snap_disk_map : qre.snap_map;
+	const int            map_cnt = to_disk ? qre.snap_disk_map_count : qre.snap_map_count;
+
+	if (!global_src || !map_src)
+		return;
+
+	memcpy (RT_MAT_GetList (RT_MAT_LIST_GLOBAL, NULL), global_src, (size_t)global_cnt * sizeof (rt_material_t));
+	memcpy (RT_MAT_GetList (RT_MAT_LIST_MAP, NULL), map_src, (size_t)map_cnt * sizeof (rt_material_t));
 
 	// The lists may have grown since the snapshot (a material the editor
 	// created); the lengths are part of what a snapshot restores.
-	RT_MAT_SetListCounts (qre.snap_global_count, qre.snap_map_count);
+	RT_MAT_SetListCounts (global_cnt, map_cnt);
 }
 
 static void QRE_FreeSnapshot (void)
@@ -746,8 +824,18 @@ static void QRE_FreeSnapshot (void)
 		Mem_Free (qre.snap_global);
 	if (qre.snap_map)
 		Mem_Free (qre.snap_map);
+	if (qre.snap_disk_global)
+		Mem_Free (qre.snap_disk_global);
+	if (qre.snap_disk_map)
+		Mem_Free (qre.snap_disk_map);
 	qre.snap_global = NULL;
 	qre.snap_map = NULL;
+	qre.snap_disk_global = NULL;
+	qre.snap_disk_map = NULL;
+	qre.snap_global_count = 0;
+	qre.snap_map_count = 0;
+	qre.snap_disk_global_count = 0;
+	qre.snap_disk_map_count = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -758,14 +846,15 @@ static void QRE_FreeSnapshot (void)
 // Global tab edit the live state in place (they do not mark anything), so the
 // session's "touched" test compares against this snapshot and Cancel/Exit put
 // it back.
-static void QRE_TakeCustomSnapshot (void)
+static void QRE_TakeCustomSnapshot (qboolean take_disk)
 {
 	int                count = 0;
 	rt_custom_light_t *lights = RT_CustomLights (&count);
 	float              color[4];
 	int                i;
 
-	memcpy (qre.snap_custom, lights, (size_t)count * sizeof (rt_custom_light_t));
+	if (count > 0)
+		memcpy (qre.snap_custom, lights, (size_t)count * sizeof (rt_custom_light_t));
 	qre.snap_custom_count = count;
 
 	for (i = 0; i < RT_CUSTOM_LIGHTS_MAX; i++)
@@ -776,36 +865,54 @@ static void QRE_TakeCustomSnapshot (void)
 	qre.snap_fog_color[1] = color[1];
 	qre.snap_fog_color[2] = color[2];
 	qre.snap_fog_density = Fog_GetDensity ();
+	qre.snap_fog_enabled = Fog_Enabled ();
+
+	if (take_disk)
+	{
+		if (count > 0)
+			memcpy (qre.snap_disk_custom, lights, (size_t)count * sizeof (rt_custom_light_t));
+		qre.snap_disk_custom_count = count;
+		VectorCopy (qre.snap_fog_color, qre.snap_disk_fog_color);
+		qre.snap_disk_fog_density = qre.snap_fog_density;
+		qre.snap_disk_fog_enabled = qre.snap_fog_enabled;
+	}
 }
 
-static void QRE_RestoreCustomSnapshot (void)
+static void QRE_RestoreCustomSnapshot (qboolean to_disk)
 {
-	rt_custom_light_t *lights = RT_CustomLights (NULL);
-	float              color[4];
+	rt_custom_light_t       *lights = RT_CustomLights (NULL);
+	const rt_custom_light_t *src = to_disk ? qre.snap_disk_custom : qre.snap_custom;
+	const int                src_count = to_disk ? qre.snap_disk_custom_count : qre.snap_custom_count;
+	const float             *fog_color = to_disk ? qre.snap_disk_fog_color : qre.snap_fog_color;
+	const float              fog_density = to_disk ? qre.snap_disk_fog_density : qre.snap_fog_density;
+	const qboolean           fog_enabled = to_disk ? qre.snap_disk_fog_enabled : qre.snap_fog_enabled;
+	float                    color[4];
 
-	if (qre.snap_custom_count > 0)
-		memcpy (lights, qre.snap_custom, (size_t)qre.snap_custom_count * sizeof (rt_custom_light_t));
-	RT_CustomLights_SetCount (qre.snap_custom_count);
+	if (src_count > 0)
+		memcpy (lights, src, (size_t)src_count * sizeof (rt_custom_light_t));
+	RT_CustomLights_SetCount (src_count);
 
 	// the live list matches the snapshot again
 	{
 		int i;
 
 		for (i = 0; i < RT_CUSTOM_LIGHTS_MAX; i++)
-			qre.snap_custom_map[i] = (i < qre.snap_custom_count) ? i : -1;
+			qre.snap_custom_map[i] = (i < src_count) ? i : -1;
 	}
 
 	// the fog is engine state, not a cvar: it comes back through the same
 	// `fog` command the Global tab edits it with, and only when it differs
 	Fog_GetColor (color);
-	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
-	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
+	if (color[0] != fog_color[0] || color[1] != fog_color[1] ||
+	    color[2] != fog_color[2] || Fog_GetDensity () != fog_density)
 	{
-		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", qre.snap_fog_density,
-		                  CLAMP (0.0f, qre.snap_fog_color[0], 1.0f),
-		                  CLAMP (0.0f, qre.snap_fog_color[1], 1.0f),
-		                  CLAMP (0.0f, qre.snap_fog_color[2], 1.0f)));
+		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", fog_density,
+		                  CLAMP (0.0f, fog_color[0], 1.0f),
+		                  CLAMP (0.0f, fog_color[1], 1.0f),
+		                  CLAMP (0.0f, fog_color[2], 1.0f)));
 	}
+	if (Fog_Enabled () != fog_enabled)
+		QRE_HostSetFogEnabled (fog_enabled);
 }
 
 // Whether the live custom list or the fog differs from the snapshot: what the
@@ -823,7 +930,8 @@ static qboolean QRE_CustomTouched (void)
 
 	Fog_GetColor (color);
 	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
-	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density)
+	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density ||
+	    Fog_Enabled () != qre.snap_fog_enabled)
 		return true;
 
 	return QRE_SkyTouched ();
@@ -836,36 +944,54 @@ static qboolean QRE_LightSessionTouched (void)
 	return (qre.light_touched_count > 0 || QRE_CustomTouched () || QRE_GlobalsTouched ()) ? true : false;
 }
 
-static void QRE_TakeLightSnapshot (void)
+static void QRE_TakeLightSnapshot (qboolean take_disk)
 {
 	rt_light_t *list = RT_LIGHT_List (&qre.snap_light_count);
 
 	if (!qre.snap_lights)
 		qre.snap_lights = (rt_light_t *)Mem_Alloc (RT_LIGHT_NAMES_MAX * sizeof (rt_light_t));
 	memcpy (qre.snap_lights, list, (size_t)qre.snap_light_count * sizeof (rt_light_t));
+	if (take_disk)
+	{
+		qre.snap_disk_light_count = qre.snap_light_count;
+		if (!qre.snap_disk_lights)
+			qre.snap_disk_lights = (rt_light_t *)Mem_Alloc (RT_LIGHT_NAMES_MAX * sizeof (rt_light_t));
+		memcpy (qre.snap_disk_lights, qre.snap_lights, (size_t)qre.snap_disk_light_count * sizeof (rt_light_t));
+	}
 
-	QRE_TakeCustomSnapshot ();
+	QRE_TakeCustomSnapshot (take_disk);
 }
 
-static void QRE_RestoreLightSnapshot (void)
+static void QRE_RestoreLightSnapshot (qboolean to_disk)
 {
-	rt_light_t *list = RT_LIGHT_List (NULL);
+	rt_light_t       *list = RT_LIGHT_List (NULL);
+	const rt_light_t *src = to_disk ? qre.snap_disk_lights : qre.snap_lights;
+	const int         src_count = to_disk ? qre.snap_disk_light_count : qre.snap_light_count;
 
-	memcpy (list, qre.snap_lights, (size_t)qre.snap_light_count * sizeof (rt_light_t));
-	RT_LIGHT_SetCount (qre.snap_light_count);
+	if (src)
+	{
+		memcpy (list, src, (size_t)src_count * sizeof (rt_light_t));
+		RT_LIGHT_SetCount (src_count);
+	}
 
-	QRE_RestoreCustomSnapshot ();
-	QRE_GlobalsRestore ();
+	QRE_RestoreCustomSnapshot (to_disk);
+	QRE_GlobalsRestore (to_disk);
 }
 
 static void QRE_FreeLightSnapshot (void)
 {
 	if (qre.snap_lights)
 		Mem_Free (qre.snap_lights);
+	if (qre.snap_disk_lights)
+		Mem_Free (qre.snap_disk_lights);
 	qre.snap_lights = NULL;
+	qre.snap_disk_lights = NULL;
 	qre.snap_light_count = 0;
+	qre.snap_disk_light_count = 0;
 	qre.snap_custom_count = 0;
+	qre.snap_disk_custom_count = 0;
 	qre.light_touched_count = 0;
+	qre.applied_light_touched_count = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,6 +1337,11 @@ static void QRE_SetFloat (int g, int param, float value)
 		}
 		break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
+	case PARAM_BASEF:
+		if (value != value)
+			value = 1.0f;
+		m->base_factor = CLAMP (0.0f, value, 4.0f);
+		break;
 	case PARAM_LBRIGHT:  m->light_brightness = value; break;
 	case PARAM_EFACTOR:  m->emissive_factor = value; break;
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
@@ -1392,7 +1523,13 @@ static void QRE_StripRootPrefix (char *path, const char *prefix)
 	if (len == 0 || strlen (path) <= len + 1 || path[len] != '/')
 		return;
 	if (!q_strncasecmp (path, norm, len))
-		memmove (path, path + len + 1, strlen (path + len + 1) + 1);
+	{
+		const char *rest = path + len + 1;
+
+		while (*rest == '/')
+			rest++;
+		memmove (path, rest, strlen (rest) + 1);
+	}
 }
 
 static void QRE_NormalizeTexturePath (char *path)
@@ -1407,13 +1544,15 @@ static void QRE_NormalizeTexturePath (char *path)
 		src++;
 	if (src[0] == '.' && (src[1] == '/' || src[1] == '\\'))
 		src += 2;
-	while (*src == '/' || *src == '\\')
-		src++;
 
 	for (; *src; src++)
 		*dst++ = (*src == '\\') ? '/' : *src;
 	*dst = '\0';
 
+	// Strip matching game directory prefixes before checking for leading '/',
+	// so POSIX absolute paths inside a game dir become relative while paths
+	// outside game dirs keep their leading '/' and fail QRE_TexturePathAbsolute.
+	QRE_StripRootPrefix (path, com_gamedir);
 	for (i = 0; i < com_numbasedirs; i++)
 	{
 		if ((size_t)q_snprintf (candidate, sizeof (candidate), "%s/%s", com_basedirs[i], game) >= sizeof (candidate))
@@ -1568,6 +1707,15 @@ static void QRE_SetText (int g, int param, const char *value)
 #define QRE_ACTIONS_MAX       256
 #define QRE_ACTION_VALUE_MAX  320
 
+typedef struct
+{
+	char         key[MAX_QPATH * 2 + 32];
+	char         mat_name[MAX_QPATH];
+	char         filename_base[MAX_QPATH];
+	gltexture_t *pick_glt;
+	gltexture_t *frame_tex;
+} qre_preview_req_t;
+
 static struct
 {
 	struct
@@ -1575,21 +1723,61 @@ static struct
 		char name[MAX_QPATH];
 		char value[QRE_ACTION_VALUE_MAX];
 	} sets[QRE_ACTIONS_MAX];
-	int      set_count;
-	char     cbuf[QRE_ACTIONS_MAX][QRE_ACTION_VALUE_MAX];
-	int      cbuf_count;
-	int      cursor_mode; // -1 none, 0 panel off, 1 panel on
-	qboolean cursor_reclaim; // the panel came back from the console: grab the cursor again
-	int      pause_world; // -1 none, 0 running, 1 paused
-	qboolean stop;
-	qboolean stop_restore;
-	int      browse_group;
-	int      browse_param;
-	qboolean texture_pending;
-	int      texture_group;
-	int      texture_param;
-	char     texture_value[MAX_QPATH];
-} qre_actions = { .cursor_mode = -1, .pause_world = -1, .browse_group = -1 };
+	int               set_count;
+	char              cbuf[QRE_ACTIONS_MAX][QRE_ACTION_VALUE_MAX];
+	int               cbuf_count;
+	int               cursor_mode; // -1 none, 0 panel off, 1 panel on
+	qboolean          cursor_reclaim; // the panel came back from the console: grab the cursor again
+	int               pause_world; // -1 none, 0 running, 1 paused
+	int               fog_enabled; // -1 none, 0 off, 1 on (CVAR_ROM via Cvar_SetROM)
+	int               sky_scope;   // -1 none, 0 global, 1 level
+	int               start_mode;  // -1 none, QRE_MODE_MATERIAL / QRE_MODE_LIGHT
+	qboolean          apply;
+	qboolean          cancel;
+	qboolean          session_save;
+	qboolean          session_discard;
+	qboolean          request_exit;
+	qboolean          back_to_chooser;
+	qboolean          stop;
+	qboolean          stop_restore;
+	int               browse_group;
+	int               browse_param;
+	qboolean          texture_pending;
+	int               texture_group;
+	int               texture_param;
+	char              texture_value[MAX_OSPATH];
+	qre_preview_req_t preview_reqs[QRE_PREVIEW_SLOTS];
+	int               preview_req_count;
+} qre_actions = {
+	.cursor_mode = -1,
+	.pause_world = -1,
+	.fog_enabled = -1,
+	.sky_scope = -1,
+	.start_mode = -1,
+	.browse_group = -1,
+};
+
+static void QRE_ResetActions (void)
+{
+	memset (&qre_actions, 0, sizeof (qre_actions));
+	qre_actions.cursor_mode = -1;
+	qre_actions.pause_world = -1;
+	qre_actions.fog_enabled = -1;
+	qre_actions.sky_scope = -1;
+	qre_actions.start_mode = -1;
+	qre_actions.browse_group = -1;
+}
+
+static void QRE_HostSetFogEnabled (qboolean enabled)
+{
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.fog_enabled = enabled ? 1 : 0;
+		return;
+	}
+
+	Cvar_SetROM ("fog_enabled", enabled ? "1" : "0");
+}
 
 static void QRE_SetWorldPaused (qboolean paused)
 {
@@ -2185,19 +2373,31 @@ static int QRE_ActiveFrame (void)
 	return -1;
 }
 
+static qboolean QRE_EntityValid (const entity_t *e)
+{
+	if (!e || !cl.entities || cl.max_edicts <= 0)
+		return false;
+	if ((uintptr_t)e < (uintptr_t)cl.entities ||
+	    (uintptr_t)e >= (uintptr_t)(cl.entities + cl.max_edicts))
+		return false;
+	return (((uintptr_t)e - (uintptr_t)cl.entities) % sizeof (entity_t)) == 0;
+}
+
 // The frame controls write into the picked entity -- its skin for a model, its
 // frame for a sprite -- so the world shows the frame the panel edits. The value
 // the entity had is kept once and given back when the panel stops driving it.
-static void QRE_FrameOverrideRelease (void)
+static void QRE_FrameOverrideRelease (qboolean restore_ent)
 {
 	if (!qre.frame_backup_valid)
 		return;
 
-	if (qre.frame_backup_ent)
+	if (qre.frame_backup_is_brush)
 	{
-		if (qre.frame_backup_is_brush)
-			R_SetTextureFrameOverride (NULL, -1);
-		else if (qre.frame_backup_is_sprite)
+		R_SetTextureFrameOverride (NULL, -1);
+	}
+	else if (restore_ent && QRE_EntityValid (qre.frame_backup_ent))
+	{
+		if (qre.frame_backup_is_sprite)
 			qre.frame_backup_ent->frame = qre.frame_backup_value;
 		else
 			qre.frame_backup_ent->skinnum = qre.frame_backup_value;
@@ -2211,6 +2411,9 @@ static void QRE_FrameOverrideApply (void)
 {
 	const qboolean sprite = (qre.pick_model && qre.pick_model->type == mod_sprite) ? true : false;
 	const qboolean brush = (qre.pick_model && qre.pick_model->type == mod_brush) ? true : false;
+
+	if (!QRE_EntityValid (qre.pick_ent))
+		return;
 
 	if (!qre.frame_backup_valid)
 	{
@@ -2233,7 +2436,7 @@ static void QRE_FrameOverrideApply (void)
 // the entity the previous pick drove gets its own value back first.
 static void QRE_FramePickInit (void)
 {
-	QRE_FrameOverrideRelease ();
+	QRE_FrameOverrideRelease (true);
 
 	if (!QRE_FrameGroup () && !QRE_BrushFrames ())
 	{
@@ -2619,9 +2822,25 @@ static void QRE_DrainActions (void)
 		Cvar_Set (qre_actions.sets[i].name, qre_actions.sets[i].value);
 	qre_actions.set_count = 0;
 
+	if (qre_actions.fog_enabled >= 0)
+	{
+		const qboolean enabled = (qre_actions.fog_enabled != 0) ? true : false;
+
+		qre_actions.fog_enabled = -1;
+		Cvar_SetROM ("fog_enabled", enabled ? "1" : "0");
+	}
+
 	for (i = 0; i < qre_actions.cbuf_count; i++)
 		Cbuf_AddText (qre_actions.cbuf[i]);
 	qre_actions.cbuf_count = 0;
+
+	if (qre_actions.sky_scope >= 0)
+	{
+		const qboolean level = (qre_actions.sky_scope != 0) ? true : false;
+
+		qre_actions.sky_scope = -1;
+		RT_SkySettings_SetScope (level);
+	}
 
 	if (qre_actions.pause_world >= 0)
 	{
@@ -2649,6 +2868,57 @@ static void QRE_DrainActions (void)
 
 		if (g < qre.group_count)
 			QRE_OpenTextureBrowser (g, p);
+	}
+
+	if (qre_actions.start_mode >= 0)
+	{
+		const int mode = qre_actions.start_mode;
+
+		qre_actions.start_mode = -1;
+		if (qre.active)
+			QRE_StartMode (mode);
+	}
+
+	if (qre_actions.apply)
+	{
+		qre_actions.apply = false;
+		if (qre.active && !qre.choosing)
+			QRE_Apply ();
+	}
+
+	if (qre_actions.cancel)
+	{
+		qre_actions.cancel = false;
+		if (qre.active && !qre.choosing)
+			QRE_Cancel ();
+	}
+
+	if (qre_actions.session_save)
+	{
+		qre_actions.session_save = false;
+		if (qre.active && !qre.choosing)
+			QRE_SessionSave ();
+	}
+
+	if (qre_actions.session_discard)
+	{
+		qre_actions.session_discard = false;
+		if (qre.active && !qre.choosing)
+			QRE_SessionDiscard ();
+	}
+
+	if (qre_actions.request_exit)
+	{
+		qre_actions.request_exit = false;
+		if (qre.active)
+			QRE_RequestExit ();
+	}
+
+	if (qre_actions.back_to_chooser)
+	{
+		qre_actions.back_to_chooser = false;
+		if (qre.active)
+			QRE_BackToChooser ();
 	}
 
 	if (qre_actions.cursor_mode >= 0)
@@ -2688,6 +2958,11 @@ static void QRE_DrainActions (void)
 		qre_actions.stop = false;
 		QRE_StopEditor (restore);
 	}
+
+	if (qre.active && !qre.choosing)
+		QRE_PreviewPump ();
+	else
+		qre_actions.preview_req_count = 0;
 }
 
 // Hover (flying) or select (fire button) a light by its wireframe.
@@ -3265,11 +3540,11 @@ void QR_Editor_UpdateView (void)
 	// frame the panel edits, and the entity's own value comes back as soon as
 	// the panel stops showing its group
 	if (qre.mode == QRE_MODE_MATERIAL && qre.mat_tab == 0 && qre.frame_tex >= 0 &&
-	    qre.pick_ent && qre.pick_ent->model == qre.pick_model &&
+	    QRE_EntityValid (qre.pick_ent) && qre.pick_ent->model == qre.pick_model &&
 	    (QRE_FrameGroup () || QRE_BrushFrames ()))
 		QRE_FrameOverrideApply ();
 	else
-		QRE_FrameOverrideRelease ();
+		QRE_FrameOverrideRelease (true);
 
 	// the dirty materials are flushed by QR_Editor_FlushDirty on the host path
 	// before R_MarkSurfaces reads the static-submit flag (SCR_UpdateScreen):
@@ -3287,6 +3562,8 @@ void QR_Editor_UpdateView (void)
 static void QRE_FreePreview (void)
 {
 	int i;
+
+	qre_actions.preview_req_count = 0;
 
 	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
 	{
@@ -3353,15 +3630,14 @@ static gltexture_t *QRE_FrameTexture (int frame)
 	return NULL;
 }
 
-static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
+static qre_preview_t *QRE_PreviewLoadMain (const char *key, const char *mat_name,
+                                           const char *filename_base, gltexture_t *pick_glt,
+                                           gltexture_t *frame_tex)
 {
-	char          key[MAX_QPATH * 2 + 32];
 	qre_preview_t *slot;
-	byte         *pixels = NULL;
-	int           i, victim = -1;
-	int           w = 0, h = 0;
-
-	q_snprintf (key, sizeof (key), "%s|%s|%p", m->name, m->filename_base, (void *)qre.pick_glt);
+	byte          *pixels = NULL;
+	int            i, victim = -1;
+	int            w = 0, h = 0;
 
 	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
 	{
@@ -3372,9 +3648,14 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 		}
 	}
 
-	// an empty slot, or the least recently used one this frame has not drawn
+	// an empty slot first, or the least recently used one this frame has not drawn
 	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
 	{
+		if (!qre.preview[i].key[0])
+		{
+			victim = i;
+			break;
+		}
 		if (qre.preview[i].last_frame == (unsigned)host_framecount)
 			continue;
 		if (victim < 0 || qre.preview[i].last_frame < qre.preview[victim].last_frame)
@@ -3399,33 +3680,35 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	q_strlcpy (slot->key, key, sizeof (slot->key));
 	slot->last_frame = (unsigned)host_framecount;
 
-	if (m->filename_base[0])
+	if (filename_base && filename_base[0])
 	{
-		gltexture_t *override_tex;
+		rt_material_t *live_mat = RT_MAT_Find (mat_name);
+		gltexture_t   *override_tex;
 
-		pixels = RT_MAT_LoadTexture (m, RT_MAT_TEX_BASE, &w, &h);
+		if (live_mat && !strcmp (live_mat->filename_base, filename_base))
+			pixels = RT_MAT_LoadTexture (live_mat, RT_MAT_TEX_BASE, &w, &h);
 		if (!pixels)
 		{
-			override_tex = TexMgr_FindTextureByNormalizedName (m->filename_base);
+			override_tex = TexMgr_FindTextureByNormalizedName (filename_base);
 			if (override_tex)
 				pixels = TexMgr_LoadRgbaForPreview (override_tex, &w, &h);
 		}
 		if (!pixels)
-			pixels = QRE_TextureBrowserResolve (m->filename_base, &w, &h);
+			pixels = QRE_TextureBrowserResolve (filename_base, &w, &h);
 	}
 	else
 	{
 		// the texture of the frame the material stands for: a model's skin or a
 		// sprite's frame; the pick is empty when the material was opened from
 		// the list, so its own engine texture stands in
-		gltexture_t *frame_tex = QRE_FrameTexture (QRE_FrameDigit (m->name));
+		gltexture_t *tex = frame_tex;
 
-		if (!frame_tex)
-			frame_tex = qre.pick_glt;
-		if (!frame_tex)
-			frame_tex = TexMgr_FindTextureByNormalizedName (m->name);
+		if (!tex)
+			tex = pick_glt;
+		if (!tex)
+			tex = TexMgr_FindTextureByNormalizedName (mat_name);
 
-		pixels = TexMgr_LoadRgbaForPreview (frame_tex, &w, &h);
+		pixels = TexMgr_LoadRgbaForPreview (tex, &w, &h);
 	}
 
 	if (!pixels || w <= 0 || h <= 0)
@@ -3460,6 +3743,66 @@ static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
 	slot->w = w;
 	slot->h = h;
 	return slot;
+}
+
+static void QRE_PreviewPump (void)
+{
+	int i;
+
+	for (i = 0; i < qre_actions.preview_req_count; i++)
+	{
+		const qre_preview_req_t *req = &qre_actions.preview_reqs[i];
+
+		QRE_PreviewLoadMain (req->key, req->mat_name, req->filename_base,
+		                     req->pick_glt, req->frame_tex);
+	}
+	qre_actions.preview_req_count = 0;
+}
+
+static qre_preview_t *QRE_PreviewFor (rt_material_t *m)
+{
+	char         key[MAX_QPATH * 2 + 32];
+	gltexture_t *frame_tex;
+	int          i;
+
+	q_snprintf (key, sizeof (key), "%s|%s|%p", m->name, m->filename_base, (void *)qre.pick_glt);
+
+	for (i = 0; i < QRE_PREVIEW_SLOTS; i++)
+	{
+		if (!strcmp (key, qre.preview[i].key))
+		{
+			qre.preview[i].last_frame = (unsigned)host_framecount;
+			return (qre.preview[i].mat != QR_NO_MATERIAL) ? &qre.preview[i] : NULL;
+		}
+	}
+
+	frame_tex = m->filename_base[0] ? NULL : QRE_FrameTexture (QRE_FrameDigit (m->name));
+
+	if (Tasks_IsWorker ())
+	{
+		// SCR_DrawGUI runs on a worker task: enqueue preview material
+		// creation/destruction for the main thread (QRE_DrainActions) instead
+		// of calling qrCreateMaterial/qrDestroyMaterial concurrently with
+		// render tasks.
+		for (i = 0; i < qre_actions.preview_req_count; i++)
+		{
+			if (!strcmp (qre_actions.preview_reqs[i].key, key))
+				return NULL;
+		}
+		if (qre_actions.preview_req_count < QRE_PREVIEW_SLOTS)
+		{
+			qre_preview_req_t *req = &qre_actions.preview_reqs[qre_actions.preview_req_count++];
+
+			q_strlcpy (req->key, key, sizeof (req->key));
+			q_strlcpy (req->mat_name, m->name, sizeof (req->mat_name));
+			q_strlcpy (req->filename_base, m->filename_base, sizeof (req->filename_base));
+			req->pick_glt = qre.pick_glt;
+			req->frame_tex = frame_tex;
+		}
+		return NULL;
+	}
+
+	return QRE_PreviewLoadMain (key, m->name, m->filename_base, qre.pick_glt, frame_tex);
 }
 
 // ---------------------------------------------------------------------------
@@ -4035,7 +4378,7 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	{
 	case QRE_T_TEXT:
 	{
-		char           buf[MAX_QPATH];
+		char           buf[MAX_OSPATH];
 		int            res;
 		const qboolean texture_error = QRE_TextureErrorActive (g, p);
 
@@ -4225,13 +4568,19 @@ static const struct
 
 static char     qre_water_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
 static qboolean qre_water_snapshot_set[countof (qre_water)];
+static char     qre_water_disk_snapshot[countof (qre_water)][QRE_SNAPSHOT_MAX];
+static qboolean qre_water_disk_snapshot_set[countof (qre_water)];
 // the two colour cvars are snapshotted as strings, like every other value: the
 // editor's own writer rounds floats to integers, so a float snapshot could not
 // reproduce a hand-authored value and the session never settled
 static char     qre_water_color_snapshot[QRE_SNAPSHOT_MAX];
 static qboolean qre_water_color_snapshot_set;
+static char     qre_water_color_disk_snapshot[QRE_SNAPSHOT_MAX];
+static qboolean qre_water_color_disk_snapshot_set;
 static char     qre_acid_color_snapshot[QRE_SNAPSHOT_MAX];
 static qboolean qre_acid_color_snapshot_set;
+static char     qre_acid_color_disk_snapshot[QRE_SNAPSHOT_MAX];
+static qboolean qre_acid_color_disk_snapshot_set;
 
 static const char *const qre_mat_cvars[] = {
 	"rt_dtal_clearance",
@@ -4252,15 +4601,19 @@ static const char *const qre_mat_cvars[] = {
 
 static char     qre_mat_cvar_snapshot[countof (qre_mat_cvars)][QRE_SNAPSHOT_MAX];
 static qboolean qre_mat_cvar_snapshot_set[countof (qre_mat_cvars)];
+static char     qre_mat_cvar_disk_snapshot[countof (qre_mat_cvars)][QRE_SNAPSHOT_MAX];
+static qboolean qre_mat_cvar_disk_snapshot_set[countof (qre_mat_cvars)];
 
-static void QRE_MatCvarsRestore (void)
+static void QRE_MatCvarsRestore (qboolean to_disk)
 {
+	const qboolean *set = to_disk ? qre_mat_cvar_disk_snapshot_set : qre_mat_cvar_snapshot_set;
+	const char (*snap)[QRE_SNAPSHOT_MAX] = to_disk ? qre_mat_cvar_disk_snapshot : qre_mat_cvar_snapshot;
 	int i;
 
 	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
 	{
-		if (qre_mat_cvar_snapshot_set[i])
-			QR_Editor_HostCvarSet (qre_mat_cvars[i], qre_mat_cvar_snapshot[i]);
+		if (set[i])
+			QR_Editor_HostCvarSet (qre_mat_cvars[i], snap[i]);
 	}
 }
 
@@ -4295,7 +4648,7 @@ static void QRE_WaterColorSet (const char *name, const float rgb[3])
 	                    (int)(CLAMP (0.0f, rgb[2], 1.0f) * 255.0f + 0.5f)));
 }
 
-static void QRE_TakeWaterSnapshot (void)
+static void QRE_TakeWaterSnapshot (qboolean take_disk)
 {
 	int i;
 
@@ -4307,11 +4660,18 @@ static void QRE_TakeWaterSnapshot (void)
 		{
 			qre_water_snapshot_set[i] = false;
 			qre_water_snapshot[i][0] = '\0';
-			continue;
+		}
+		else
+		{
+			qre_water_snapshot_set[i] = true;
+			q_strlcpy (qre_water_snapshot[i], var->string ? var->string : "", sizeof (qre_water_snapshot[i]));
 		}
 
-		qre_water_snapshot_set[i] = true;
-		q_strlcpy (qre_water_snapshot[i], var->string ? var->string : "", sizeof (qre_water_snapshot[i]));
+		if (take_disk)
+		{
+			qre_water_disk_snapshot_set[i] = qre_water_snapshot_set[i];
+			q_strlcpy (qre_water_disk_snapshot[i], qre_water_snapshot[i], sizeof (qre_water_disk_snapshot[i]));
+		}
 	}
 
 	{
@@ -4319,10 +4679,20 @@ static void QRE_TakeWaterSnapshot (void)
 
 		qre_water_color_snapshot_set = (var != NULL);
 		q_strlcpy (qre_water_color_snapshot, (var && var->string) ? var->string : "", sizeof (qre_water_color_snapshot));
+		if (take_disk)
+		{
+			qre_water_color_disk_snapshot_set = qre_water_color_snapshot_set;
+			q_strlcpy (qre_water_color_disk_snapshot, qre_water_color_snapshot, sizeof (qre_water_color_disk_snapshot));
+		}
 
 		var = Cvar_FindVar ("rt_water_acidcolor");
 		qre_acid_color_snapshot_set = (var != NULL);
 		q_strlcpy (qre_acid_color_snapshot, (var && var->string) ? var->string : "", sizeof (qre_acid_color_snapshot));
+		if (take_disk)
+		{
+			qre_acid_color_disk_snapshot_set = qre_acid_color_snapshot_set;
+			q_strlcpy (qre_acid_color_disk_snapshot, qre_acid_color_snapshot, sizeof (qre_acid_color_disk_snapshot));
+		}
 	}
 
 	for (i = 0; i < (int)countof (qre_mat_cvars); i++)
@@ -4333,11 +4703,18 @@ static void QRE_TakeWaterSnapshot (void)
 		{
 			qre_mat_cvar_snapshot_set[i] = false;
 			qre_mat_cvar_snapshot[i][0] = '\0';
-			continue;
+		}
+		else
+		{
+			qre_mat_cvar_snapshot_set[i] = true;
+			q_strlcpy (qre_mat_cvar_snapshot[i], var->string ? var->string : "", sizeof (qre_mat_cvar_snapshot[i]));
 		}
 
-		qre_mat_cvar_snapshot_set[i] = true;
-		q_strlcpy (qre_mat_cvar_snapshot[i], var->string ? var->string : "", sizeof (qre_mat_cvar_snapshot[i]));
+		if (take_disk)
+		{
+			qre_mat_cvar_disk_snapshot_set[i] = qre_mat_cvar_snapshot_set[i];
+			q_strlcpy (qre_mat_cvar_disk_snapshot[i], qre_mat_cvar_snapshot[i], sizeof (qre_mat_cvar_disk_snapshot[i]));
+		}
 	}
 }
 
@@ -4384,22 +4761,28 @@ static qboolean QRE_WaterTouched (void)
 	return false;
 }
 
-static void QRE_WaterRestore (void)
+static void QRE_WaterRestore (qboolean to_disk)
 {
-	int i;
+	const qboolean *water_set = to_disk ? qre_water_disk_snapshot_set : qre_water_snapshot_set;
+	const char (*water_snap)[QRE_SNAPSHOT_MAX] = to_disk ? qre_water_disk_snapshot : qre_water_snapshot;
+	const qboolean  water_color_set = to_disk ? qre_water_color_disk_snapshot_set : qre_water_color_snapshot_set;
+	const char     *water_color = to_disk ? qre_water_color_disk_snapshot : qre_water_color_snapshot;
+	const qboolean  acid_color_set = to_disk ? qre_acid_color_disk_snapshot_set : qre_acid_color_snapshot_set;
+	const char     *acid_color = to_disk ? qre_acid_color_disk_snapshot : qre_acid_color_snapshot;
+	int             i;
 
 	for (i = 0; i < (int)countof (qre_water); i++)
 	{
-		if (qre_water_snapshot_set[i])
-			QR_Editor_HostCvarSet (qre_water[i].name, qre_water_snapshot[i]);
+		if (water_set[i])
+			QR_Editor_HostCvarSet (qre_water[i].name, water_snap[i]);
 	}
 
-	if (qre_water_color_snapshot_set)
-		QR_Editor_HostCvarSet ("rt_water_color", qre_water_color_snapshot);
-	if (qre_acid_color_snapshot_set)
-		QR_Editor_HostCvarSet ("rt_water_acidcolor", qre_acid_color_snapshot);
+	if (water_color_set)
+		QR_Editor_HostCvarSet ("rt_water_color", water_color);
+	if (acid_color_set)
+		QR_Editor_HostCvarSet ("rt_water_acidcolor", acid_color);
 
-	QRE_MatCvarsRestore ();
+	QRE_MatCvarsRestore (to_disk);
 }
 
 static void QRE_MatWaterSection (void)
@@ -5240,6 +5623,87 @@ static qboolean QRE_TexturePreviewQueued (const char *key)
 	return false;
 }
 
+// Worker-safe image decode: reads bounded bytes from an opened FILE and
+// decodes via stb_image without ever touching image.c's global state or
+// calling Sys_Error on malformed TGA/PCX/PNG/JPG assets.
+static byte *QRE_LoadImageFromFileBounded (FILE *f, int len, int *width, int *height)
+{
+	byte *buf;
+	byte *pixels;
+	int   w = 0, h = 0;
+
+	if (!f || len <= 0 || len > (64 * 1024 * 1024))
+		return NULL;
+
+	buf = (byte *)Mem_Alloc ((size_t)len);
+	if (!buf)
+		return NULL;
+
+	if (fread (buf, 1, (size_t)len, f) != (size_t)len)
+	{
+		Mem_Free (buf);
+		return NULL;
+	}
+
+	pixels = stbi_load_from_memory (buf, len, &w, &h, NULL, 4);
+	Mem_Free (buf);
+	if (!pixels || w <= 0 || h <= 0)
+	{
+		if (pixels)
+			Mem_Free (pixels);
+		return NULL;
+	}
+
+	if (width)
+		*width = w;
+	if (height)
+		*height = h;
+	return pixels;
+}
+
+static byte *QRE_TexturePreviewLoadImageSafe (const char *asset, int *width, int *height)
+{
+	static const char *const exts[] = { ".tga", ".png", ".jpg", ".jpeg" };
+	char  base[MAX_QPATH];
+	char  candidate[MAX_QPATH];
+	char *dot;
+	FILE *f = NULL;
+	int   len;
+	int   i;
+
+	if (!asset || !asset[0])
+		return NULL;
+
+	len = COM_FOpenFile (asset, &f, NULL);
+	if (f)
+	{
+		byte *pixels = QRE_LoadImageFromFileBounded (f, len, width, height);
+		fclose (f);
+		return pixels;
+	}
+
+	q_strlcpy (base, asset, sizeof (base));
+	dot = strrchr (base, '.');
+	if (dot)
+		*dot = '\0';
+
+	for (i = 0; i < (int)countof (exts); i++)
+	{
+		if ((size_t)q_snprintf (candidate, sizeof (candidate), "%s%s", base, exts[i]) >= sizeof (candidate))
+			continue;
+		f = NULL;
+		len = COM_FOpenFile (candidate, &f, NULL);
+		if (f)
+		{
+			byte *pixels = QRE_LoadImageFromFileBounded (f, len, width, height);
+			fclose (f);
+			return pixels;
+		}
+	}
+
+	return NULL;
+}
+
 static byte *QRE_TextureBrowserLoadPreviewRequest (const qre_textbrowser_preview_request_t *request,
                                                    int *width, int *height)
 {
@@ -5252,16 +5716,7 @@ static byte *QRE_TextureBrowserLoadPreviewRequest (const qre_textbrowser_preview
 			if ((size_t)q_snprintf (path, sizeof (path), "%s/%s", request->origin, request->asset) < sizeof (path))
 				return Image_LoadImageOSPath (path, width, height);
 		}
-		{
-			char name[MAX_QPATH];
-			char *dot;
-
-			q_strlcpy (name, request->asset, sizeof (name));
-			dot = strrchr (name, '.');
-			if (dot)
-				*dot = '\0';
-			return Image_LoadImage (name, width, height);
-		}
+		return QRE_TexturePreviewLoadImageSafe (request->asset, width, height);
 	}
 
 	if (width)
@@ -6639,6 +7094,8 @@ static const qre_global_t qre_globals[] = {
 
 static char     qre_globals_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
 static qboolean qre_globals_snapshot_set[countof (qre_globals)];
+static char     qre_globals_disk_snapshot[countof (qre_globals)][QRE_SNAPSHOT_MAX];
+static qboolean qre_globals_disk_snapshot_set[countof (qre_globals)];
 
 static const char *QRE_GlobalCvarName (const qre_global_t *g)
 {
@@ -6660,7 +7117,7 @@ static qboolean QRE_GlobalCondMet (int cond)
 	}
 }
 
-static void QRE_TakeGlobalsSnapshot (void)
+static void QRE_TakeGlobalsSnapshot (qboolean take_disk)
 {
 	int i;
 
@@ -6673,11 +7130,18 @@ static void QRE_TakeGlobalsSnapshot (void)
 		{
 			qre_globals_snapshot_set[i] = false;
 			qre_globals_snapshot[i][0] = '\0';
-			continue;
+		}
+		else
+		{
+			qre_globals_snapshot_set[i] = true;
+			q_strlcpy (qre_globals_snapshot[i], var->string ? var->string : "", sizeof (qre_globals_snapshot[i]));
 		}
 
-		qre_globals_snapshot_set[i] = true;
-		q_strlcpy (qre_globals_snapshot[i], var->string ? var->string : "", sizeof (qre_globals_snapshot[i]));
+		if (take_disk)
+		{
+			qre_globals_disk_snapshot_set[i] = qre_globals_snapshot_set[i];
+			q_strlcpy (qre_globals_disk_snapshot[i], qre_globals_snapshot[i], sizeof (qre_globals_disk_snapshot[i]));
+		}
 	}
 }
 
@@ -6715,14 +7179,23 @@ static qboolean QRE_SkyTouched (void)
 	return RT_SkySettings_SessionDirty ();
 }
 
-static void QRE_GlobalsRestore (void)
+static void QRE_GlobalsRestore (qboolean to_disk)
 {
+	const qboolean *set = to_disk ? qre_globals_disk_snapshot_set : qre_globals_snapshot_set;
+	const char (*snap)[QRE_SNAPSHOT_MAX] = to_disk ? qre_globals_disk_snapshot : qre_globals_snapshot;
 	int i;
 
 	for (i = 0; i < (int)countof (qre_globals); i++)
 	{
-		if (qre_globals_snapshot_set[i])
-			QR_Editor_HostCvarSet (QRE_GlobalCvarName (&qre_globals[i]), qre_globals_snapshot[i]);
+		const char *name = QRE_GlobalCvarName (&qre_globals[i]);
+
+		if (!set[i])
+			continue;
+		// Sky-managed cvars are restored by RT_SkySettings_RestoreCheckpoint /
+		// RT_SkySettings_EndSession; restoring them here clobbers the active scope.
+		if (RT_SkySettings_IsManaged (name))
+			continue;
+		QR_Editor_HostCvarSet (name, snap[i]);
 	}
 }
 
@@ -6787,7 +7260,10 @@ static void QRE_SkyScopeCheckbox (void)
 	                     "Switching the box puts the values of the chosen scope on screen."))
 	{
 		qre.sky_global = value ? true : false;
-		RT_SkySettings_SetScope (!qre.sky_global);
+		if (Tasks_IsWorker ())
+			qre_actions.sky_scope = qre.sky_global ? 0 : 1;
+		else
+			RT_SkySettings_SetScope (!qre.sky_global);
 	}
 }
 
@@ -6915,6 +7391,15 @@ static void QRE_LightGlobalTab (void)
 	// so they go through the `fog` command (the same path a map's key and the
 	// console use) while the getters keep the widgets in step with the map.
 	QR_GUI_Label ("Fog");
+
+	{
+		int fog_en = Fog_Enabled () ? 1 : 0;
+
+		if (QR_GUI_Checkbox ("fog_enabled", &fog_en, "Whether the level's fog is drawn at all."))
+			QRE_HostSetFogEnabled (fog_en ? true : false);
+		if (QR_GUI_ResetButton ("fog_enabled", Fog_Enabled () != qre.snap_fog_enabled))
+			QRE_HostSetFogEnabled (qre.snap_fog_enabled);
+	}
 
 	float    color[4];
 	float    density = Fog_GetDensity ();
@@ -7333,8 +7818,11 @@ static void QRE_LightEntityFields (void)
 
 	if (light)
 	{
-		const rt_light_t *orig = QRE_LightOriginal (light->name);
+		const rt_light_t *orig_inst = QRE_LightOriginal (ikey);
+		const rt_light_t *orig_shared = QRE_LightOriginal (qre.sel_light.name);
+		const rt_light_t *orig;
 		qboolean          group = false;
+		qboolean          ge_changed;
 		float             value;
 		int               radius_mixed;
 
@@ -7348,8 +7836,10 @@ static void QRE_LightEntityFields (void)
 				if (ge)
 				{
 					// back into the group: the instance entry goes and the
-					// group's values apply again
+					// group's values apply again; touch ikey so the writer
+					// drops any persisted #uniqueID block from qray.lights.yaml
 					RT_LIGHT_Remove (ikey);
+					QRE_TouchLight (ikey);
 					inst = NULL;
 					light = RT_LIGHT_Ensure (qre.sel_light.name);
 					if (light)
@@ -7370,8 +7860,8 @@ static void QRE_LightEntityFields (void)
 					if (own)
 					{
 						if (light)
-						QRE_LightCopyFields (own, light);
-					own->group_edit = false;
+							QRE_LightCopyFields (own, light);
+						own->group_edit = false;
 						QRE_TouchLight (own->name);
 						inst = own;
 						light = own;
@@ -7379,26 +7869,51 @@ static void QRE_LightEntityFields (void)
 				}
 			}
 		}
-		if (QR_GUI_ResetButton ("group_edit", inst != NULL ||
-		                        (light->group_edit != (orig ? orig->group_edit : true))))
+
+		ge_changed = orig_inst
+		             ? (inst == NULL || inst->group_edit != orig_inst->group_edit)
+		             : (inst != NULL || (light && light->group_edit != (orig_shared ? orig_shared->group_edit : true)));
+
+		if (QR_GUI_ResetButton ("group_edit", ge_changed))
 		{
-			// the reset goes back to following the group
-			if (inst)
+			if (orig_inst)
 			{
-				RT_LIGHT_Remove (ikey);
-				inst = NULL;
-				light = RT_LIGHT_Ensure (qre.sel_light.name);
+				// Restore the baseline instance override instead of deleting it.
+				rt_light_t *own = RT_LIGHT_Ensure (ikey);
+
+				if (own)
+				{
+					*own = *orig_inst;
+					QRE_TouchLight (ikey);
+					inst = own;
+					light = own;
+				}
 			}
-			if (light)
+			else
 			{
-				light->group_edit = true;
-				if (!RT_LIGHT_HasFields (light))
-					QRE_LightJoinGroup (light);
-				else
-					QRE_TouchLight (light->name);
+				// Baseline had no instance override: drop ikey and restore shared group_edit.
+				if (inst)
+				{
+					RT_LIGHT_Remove (ikey);
+					QRE_TouchLight (ikey);
+					inst = NULL;
+					light = RT_LIGHT_Ensure (qre.sel_light.name);
+				}
+				if (light)
+				{
+					light->group_edit = orig_shared ? orig_shared->group_edit : true;
+					if (!RT_LIGHT_HasFields (light))
+						QRE_LightJoinGroup (light);
+					else
+						QRE_TouchLight (light->name);
+				}
 			}
 		}
 
+		if (!light)
+			return;
+
+		orig = QRE_LightOriginal (light->name);
 		group = (inst == NULL && light->group_edit) ? true : false;
 
 		radius_mixed = group ? QRE_LightGroupMixedMask (light, QRE_LIGHT_F_RADIUS) : 0;
@@ -8591,31 +9106,56 @@ static void QRE_ClosePanel (void)
 static void QRE_Apply (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
-	const qboolean globals = light ? (QRE_GlobalsTouched () || qre.sky_global) : QRE_WaterTouched ();
-	const qboolean touched = light ? QRE_LightSessionTouched () : (qre.touched_count > 0);
+	qboolean       custom_dirty;
+	qboolean       globals;
 	qboolean       session;
+	int            write_res;
+
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.apply = true;
+		return;
+	}
 
 	// the live cvars belong to the scope they were edited in, so the writer
 	// knows what the level's own set now is
 	if (light)
 		RT_SkySettings_CaptureScope ();
 
-	session = QRE_WriteSession ();
+	custom_dirty = light ? (QRE_CustomTouched () || qre.force_write) : false;
+	globals = light ? (QRE_GlobalsTouched () || (qre.sky_global && QRE_SkyTouched ())) : QRE_WaterTouched ();
+
+	write_res = QRE_WriteSession ();
+	if (write_res == QRE_WRITE_ERROR)
+	{
+		QRE_Notify ("the session could not be written");
+		return;
+	}
+
+	session = (write_res == QRE_WRITE_WROTE) ? true : false;
 
 	if (!session && !globals)
 	{
-		QRE_Notify (touched ? "the session could not be written" : "nothing to save yet");
+		QRE_Notify ("nothing to save yet");
 		return;
 	}
 
 	if (globals)
+	{
 		Host_WriteConfiguration ();
+		qre.applied_wrote_config = true;
+	}
+
+	qre.has_applied = true;
 
 	if (light)
 	{
-		QRE_TakeLightSnapshot (); // Cancel now reverts to the state just saved
-		QRE_TakeGlobalsSnapshot ();
-		RT_SkySettings_BeginSession ();
+		if (custom_dirty)
+			qre.force_write = true;
+		qre.applied_light_touched_count = qre.light_touched_count;
+		QRE_TakeLightSnapshot (false);   // update applied checkpoint; keep disk baseline
+		QRE_TakeGlobalsSnapshot (false); // update applied checkpoint; keep disk baseline
+		RT_SkySettings_CheckpointSession ();
 
 		if (session)
 			QRE_Notify ("session written to qray.lights.editor.yaml");
@@ -8624,8 +9164,9 @@ static void QRE_Apply (void)
 		return;
 	}
 
-	QRE_TakeSnapshot (); // Cancel now reverts to the state just saved
-	QRE_TakeWaterSnapshot ();
+	qre.applied_touched_count = qre.touched_count;
+	QRE_TakeSnapshot (false);      // update applied checkpoint; keep disk baseline
+	QRE_TakeWaterSnapshot (false); // update applied checkpoint; keep disk baseline
 	if (session)
 		QRE_Notify ("session written to qray.materials.editor.yaml");
 	if (globals)
@@ -8634,27 +9175,47 @@ static void QRE_Apply (void)
 
 static void QRE_Cancel (void)
 {
-	if (qre.mode == QRE_MODE_LIGHT)
+	if (Tasks_IsWorker ())
 	{
-		// the light uploads read the live lists every frame, so putting the
-		// snapshots back is enough; the fog goes back through the fog command
-		QRE_RestoreLightSnapshot ();
-
-		RT_SkySettings_EndSession ();
-		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
-		RT_SkySettings_SetScope (!qre.sky_global);
-		RT_SkySettings_BeginSession ();
-
-		remove (qre.editor_file);
-		QRE_ClearSessionState ();
-
-		QRE_Notify ("light overrides, custom lights, fog and global settings reverted");
+		qre_actions.cancel = true;
 		return;
 	}
 
-	QRE_RestoreSnapshot ();
-	QRE_ReapplyTouched (); // put the yaml values back on screen
-	QRE_WaterRestore ();
+	if (qre.mode == QRE_MODE_LIGHT)
+	{
+		// the light uploads read the live lists every frame, so putting the
+		// applied checkpoint back is enough; the fog goes back through the fog
+		// command and Cvar_SetROM
+		QRE_RestoreLightSnapshot (false);
+
+		if (qre.has_applied)
+		{
+			RT_SkySettings_RestoreCheckpoint ();
+			qre.sky_global = !RT_SkySettings_IsLevelScope ();
+			qre.light_touched_count = qre.applied_light_touched_count;
+			qre.dirty_count = 0;
+			memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
+			memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
+			QRE_Notify ("reverted to last Save (Exit -> No discards all changes)");
+		}
+		else
+		{
+			RT_SkySettings_EndSession ();
+			qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
+			RT_SkySettings_SetScopeNoCapture (!qre.sky_global);
+			RT_SkySettings_BeginSession ();
+
+			remove (qre.editor_file);
+			QRE_ClearSessionState ();
+
+			QRE_Notify ("light overrides, custom lights, fog and global settings reverted");
+		}
+		return;
+	}
+
+	QRE_RestoreSnapshot (false);
+	QRE_ReapplyTouched (); // put the checkpoint/yaml values back on screen
+	QRE_WaterRestore (false);
 
 	qre.tmp_appended = false;
 
@@ -8678,12 +9239,20 @@ static void QRE_Cancel (void)
 		QRE_ResolveGroup (qre.pick_name);
 	}
 
-	// nothing is pending after a cancel: the session files go away, so Exit
-	// goes back to the chooser instead of asking to save them
-	remove (qre.editor_file);
-	QRE_ClearSessionState ();
+	if (qre.has_applied)
+	{
+		qre.touched_count = qre.applied_touched_count;
+		QRE_Notify ("reverted to last Save (Exit -> No discards all changes)");
+	}
+	else
+	{
+		// nothing is pending after a cancel: the session files go away, so Exit
+		// goes back to the chooser instead of asking to save them
+		remove (qre.editor_file);
+		QRE_ClearSessionState ();
 
-	QRE_Notify ("materials and water settings reverted to the values from qray.materials.yaml and the config");
+		QRE_Notify ("materials and water settings reverted to the values from qray.materials.yaml and the config");
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -9119,12 +9688,69 @@ static qboolean QRE_CreateDir (const char *path)
 	return Sys_TryMkdir (buf);
 }
 
+// Parses the scalar value after "name:" on a YAML line, stripping optional
+// single or double quotes (and unquoted inline comments) and lowercasing it.
+static void QRE_ParseYamlNameValue (const char *p, char *out, size_t outsize)
+{
+	const char *e;
+	size_t      n;
+
+	if (!out || outsize == 0)
+		return;
+	out[0] = '\0';
+	if (!p)
+		return;
+
+	while (*p == ' ' || *p == '\t')
+		p++;
+
+	if (*p == '"' || *p == '\'')
+	{
+		const char quote = *p++;
+
+		e = p;
+		while (*e && *e != quote && *e != '\r' && *e != '\n')
+			e++;
+	}
+	else
+	{
+		e = p;
+		while (*e && *e != '\r' && *e != '\n' && *e != ' ' && *e != '\t' && *e != '#')
+			e++;
+	}
+
+	n = (size_t)(e - p);
+	if (n >= outsize)
+		n = outsize - 1;
+	memcpy (out, p, n);
+	out[n] = '\0';
+	q_strlwr (out);
+}
+
+static char *QRE_SkipUtf8Bom (char *s)
+{
+	if ((unsigned char)s[0] == 0xEF &&
+	    (unsigned char)s[1] == 0xBB &&
+	    (unsigned char)s[2] == 0xBF)
+		return s + 3;
+	return s;
+}
+
+static void QRE_FputsTrack (const char *s, FILE *out, int *last_char)
+{
+	size_t len = strlen (s);
+
+	fputs (s, out);
+	if (last_char && len > 0)
+		*last_char = (unsigned char)s[len - 1];
+}
+
 // Writes the materials session file: the target file's own text with the blocks
 // of the touched entries replaced, so comments, formatting and keys the loader
 // does not understand survive a save. Entries the target does not carry are
 // appended; a target that does not exist gets the standard header. Apply writes
 // it, Save copies it over the target, Discard deletes it.
-static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_count)
+static int QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_count)
 {
 	FILE    *in;
 	FILE    *out;
@@ -9132,17 +9758,19 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 	char     written[QRE_TOUCHED_MAX];
 	qboolean skipping = false;
 	qboolean wrote = false;
+	qboolean had_root = false;
+	int      last_char = '\n';
 	int      i;
 
 	if (touched_count <= 0 || touched_count > QRE_TOUCHED_MAX)
-		return false;
+		return QRE_WRITE_EMPTY;
 
 	memset (written, 0, sizeof (written));
 
 	if (!QRE_CreateDir (com_gamedir))
 	{
 		QRE_Notify ("cannot create %s", com_gamedir);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 
 	in = fopen (qre.target_file, "r");
@@ -9152,7 +9780,7 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		if (in)
 			fclose (in);
 		QRE_Notify ("cannot write %s", qre.editor_file);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 
 	if (!in)
@@ -9162,51 +9790,58 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 
 		fprintf (out, "%s", light ? RT_LIGHT_Header () : qre_yaml_header);
 		fprintf (out, "%s\n", light ? "qray_lights:" : "qray_materials:");
+		had_root = true;
+		last_char = '\n';
 	}
 	else
 	{
+		qboolean first_line = true;
+
 		while (fgets (line, sizeof (line), in))
 		{
-			char *p = line;
+			char *start = first_line ? QRE_SkipUtf8Bom (line) : line;
+			char *p = start;
 			char  name[MAX_QPATH];
+
+			first_line = false;
 
 			while (*p == ' ' || *p == '\t')
 				p++;
 
 			if (!strncmp (p, "- name:", 7))
 			{
-				char *e;
-				int   n;
-
-				p += 7;
-				while (*p == ' ' || *p == '\t')
-					p++;
-				e = p;
-				while (*e && *e != '\r' && *e != '\n' && *e != ' ' && *e != '\t')
-					e++;
-				n = (int)(e - p);
-				if (n >= MAX_QPATH)
-					n = MAX_QPATH - 1;
-				memcpy (name, p, (size_t)n);
-				name[n] = '\0';
-				q_strlwr (name);
+				QRE_ParseYamlNameValue (p + 7, name, sizeof (name));
 
 				skipping = false;
 				for (i = 0; i < touched_count; i++)
 				{
-					if (!strcmp (touched[i], name) && !written[i] && QRE_SessionEntryResolves (name))
+					if (!q_strcasecmp (touched[i], name))
 					{
-						QRE_SessionWriteEntry (out, name);
-						written[i] = 1;
-						skipping = true;
-						wrote = true;
-						break;
+						if (written[i])
+						{
+							skipping = true;
+							break;
+						}
+						if (QRE_SessionEntryResolves (name))
+						{
+							if (last_char != '\n')
+							{
+								fputc ('\n', out);
+								last_char = '\n';
+							}
+							QRE_SessionWriteEntry (out, name);
+							written[i] = 1;
+							skipping = true;
+							wrote = true;
+							last_char = '\n';
+							break;
+						}
 					}
 				}
 				if (skipping)
 					continue;
 			}
-			else if (skipping && (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n'))
+			else if (skipping && (start[0] == ' ' || start[0] == '\t' || start[0] == '\r' || start[0] == '\n'))
 			{
 				continue; // the body of the block that was replaced
 			}
@@ -9215,21 +9850,27 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 				skipping = false;
 			}
 
-			if (line[0] != ' ' && line[0] != '\t')
+			if (start[0] != ' ' && start[0] != '\t')
 			{
-				if (!strncmp (line, "materials:", 10))
+				if (!strncmp (start, "qray_materials:", 15) || !strncmp (start, "qray_lights:", 12))
 				{
-					fputs ("qray_materials:\n", out); // migrate the old root key
+					had_root = true;
+				}
+				else if (!strncmp (start, "materials:", 10))
+				{
+					QRE_FputsTrack ("qray_materials:\n", out, &last_char); // migrate the old root key
+					had_root = true;
 					continue;
 				}
-				if (!strncmp (line, "lights:", 7))
+				else if (!strncmp (start, "lights:", 7))
 				{
-					fputs ("qray_lights:\n", out); // migrate the old root key
+					QRE_FputsTrack ("qray_lights:\n", out, &last_char); // migrate the old root key
+					had_root = true;
 					continue;
 				}
 			}
 
-			fputs (line, out);
+			QRE_FputsTrack (line, out, &last_char);
 		}
 		fclose (in);
 	}
@@ -9239,7 +9880,21 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 	{
 		if (!written[i] && QRE_SessionEntryResolves (touched[i]))
 		{
+			if (last_char != '\n')
+			{
+				fputc ('\n', out);
+				last_char = '\n';
+			}
+			if (!had_root)
+			{
+				const qboolean light = (qre.mode == QRE_MODE_LIGHT);
+
+				fprintf (out, "%s\n", light ? "qray_lights:" : "qray_materials:");
+				had_root = true;
+				last_char = '\n';
+			}
 			QRE_SessionWriteEntry (out, touched[i]);
+			last_char = '\n';
 			wrote = true;
 		}
 	}
@@ -9248,7 +9903,7 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 	{
 		fclose (out);
 		remove (qre.editor_file); // an empty session is no session
-		return false;
+		return QRE_WRITE_EMPTY;
 	}
 
 	if (ferror (out) || fflush (out) != 0)
@@ -9256,12 +9911,12 @@ static qboolean QRE_WriteMergedSession (char (*touched)[MAX_QPATH], int touched_
 		QRE_Notify ("write error in %s", qre.editor_file);
 		fclose (out);
 		remove (qre.editor_file);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 	fclose (out);
 
 	Con_Printf ("qr editor: session written to %s\n", qre.editor_file);
-	return true;
+	return QRE_WRITE_WROTE;
 }
 
 // The current level's section: the fog that is in effect and the live custom
@@ -9349,43 +10004,48 @@ static qboolean QRE_NextIsEmitterBody (FILE *f)
 // Copies the level sections of a lights file into the session, leaving out the
 // current level's section (when the Custom tab was touched) and, of a merged
 // file, the emitter list under the root "qray_lights:" key.
-static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *skip_level)
+static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *skip_level, int *last_char)
 {
 	FILE    *in = fopen (source, "r");
 	char     line[2048];
 	qboolean skipping = false;
 	qboolean started = false;
+	qboolean first_line = true;
 
 	if (!in)
 		return;
 
 	while (fgets (line, sizeof (line), in))
 	{
+		char *start = first_line ? QRE_SkipUtf8Bom (line) : line;
+
+		first_line = false;
+
 		if (!started)
 		{
-			if (line[0] == '#' || line[0] == ' ' || line[0] == '\t' ||
-			    line[0] == '\r' || line[0] == '\n')
+			if (start[0] == '#' || start[0] == ' ' || start[0] == '\t' ||
+			    start[0] == '\r' || start[0] == '\n')
 				continue;
 			started = true;
 		}
 
 		if (skipping)
 		{
-			if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+			if (start[0] == ' ' || start[0] == '\t' || start[0] == '\r' || start[0] == '\n')
 				continue;
 			skipping = false;
 		}
 
-		if (line[0] == '-' && !strncmp (line, "- name:", 7))
+		if (start[0] == '-' && !strncmp (start, "- name:", 7))
 		{
 			skipping = true;
 			continue;
 		}
 
-		if (line[0] != ' ' && line[0] != '\t' && line[0] != '#' &&
-		    line[0] != '\r' && line[0] != '\n')
+		if (start[0] != ' ' && start[0] != '\t' && start[0] != '#' &&
+		    start[0] != '\r' && start[0] != '\n')
 		{
-			char *colon = strchr (line, ':');
+			char *colon = strchr (start, ':');
 
 			if (colon)
 			{
@@ -9393,12 +10053,12 @@ static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *ski
 				char *e = colon;
 				int   n;
 
-				while (e > line && (e[-1] == ' ' || e[-1] == '\t'))
+				while (e > start && (e[-1] == ' ' || e[-1] == '\t'))
 					e--;
-				n = (int)(e - line);
+				n = (int)(e - start);
 				if (n >= (int)sizeof (key))
 					n = (int)sizeof (key) - 1;
-				memcpy (key, line, (size_t)n);
+				memcpy (key, start, (size_t)n);
 				key[n] = '\0';
 				q_strlwr (key);
 
@@ -9420,7 +10080,7 @@ static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *ski
 			}
 		}
 
-		fputs (line, out);
+		QRE_FputsTrack (start, out, last_char);
 	}
 
 	fclose (in);
@@ -9435,21 +10095,25 @@ static void QRE_WriteLevelBlocks (FILE *out, const char *source, const char *ski
 // emitter list, so a section named "lights" belongs to that level.
 static int QRE_FileLightsRootKind (const char *path)
 {
-	FILE *f = fopen (path, "r");
-	char  line[2048];
-	int   kind = QRE_LIGHTS_ROOT_NONE;
+	FILE    *f = fopen (path, "r");
+	char     line[2048];
+	int      kind = QRE_LIGHTS_ROOT_NONE;
+	qboolean first_line = true;
 
 	if (!f)
 		return QRE_LIGHTS_ROOT_NONE;
 
 	while (fgets (line, sizeof (line), f))
 	{
-		if (!strncmp (line, "qray_lights:", 12))
+		char *start = first_line ? QRE_SkipUtf8Bom (line) : line;
+
+		first_line = false;
+		if (!strncmp (start, "qray_lights:", 12))
 		{
 			kind = QRE_LIGHTS_ROOT_QRAY;
 			break;
 		}
-		if (kind == QRE_LIGHTS_ROOT_NONE && !strncmp (line, "lights:", 7) &&
+		if (kind == QRE_LIGHTS_ROOT_NONE && !strncmp (start, "lights:", 7) &&
 		    QRE_NextIsEmitterBody (f))
 			kind = QRE_LIGHTS_ROOT_LEGACY;
 	}
@@ -9488,14 +10152,18 @@ static qboolean QRE_LightWriteTouched (FILE *out, qboolean *written, int index)
 	return true;
 }
 
-// True when the entry is a touched one that resolves but no longer carries any
+// True when the entry is a touched one that was removed (e.g. a #uniqueID
+// override dropped on rejoining its group) or no longer carries any authored
 // field: the block in the target is stale and has to leave with the save.
 static qboolean QRE_LightDropTouched (qboolean *written, int index)
 {
+	rt_light_t *l;
+
 	if (index < 0 || index >= qre.light_touched_count || written[index])
 		return false;
 
-	if (!RT_LIGHT_Find (qre.light_touched[index]))
+	l = RT_LIGHT_Find (qre.light_touched[index]);
+	if (l && RT_LIGHT_HasFields (l))
 		return false;
 
 	written[index] = true;
@@ -9520,10 +10188,11 @@ static int QRE_LightWriteMissing (FILE *out, qboolean *written)
 // fog. A merged target keeps its own text: only the touched emitter blocks and
 // the current level's section are replaced, so comments and keys the loader
 // does not understand survive a save.
-static qboolean QRE_WriteLightSession (void)
+static int QRE_WriteLightSession (void)
 {
 	char        names[QRE_SESSION_NAMES_MAX][MAX_QPATH];
 	int         name_count = 0;
+	int         orig_name_count = 0;
 	char        level[64];
 	char        legacy_emitter[MAX_OSPATH];
 	char        legacy_custom[MAX_OSPATH];
@@ -9534,15 +10203,16 @@ static qboolean QRE_WriteLightSession (void)
 	qboolean    merged_target = (root_kind != QRE_LIGHTS_ROOT_NONE);
 	FILE       *out;
 	qboolean    wrote = false;
+	int         last_char = '\n';
 	int         i, n;
 
 	if (qre.light_touched_count <= 0 && !custom_touched)
-		return false;
+		return QRE_WRITE_EMPTY;
 
 	if (!QRE_CreateDir (com_gamedir))
 	{
 		QRE_Notify ("cannot create %s", com_gamedir);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 
 	q_snprintf (legacy_emitter, sizeof (legacy_emitter), "%s/lights.yaml", com_gamedir);
@@ -9551,7 +10221,10 @@ static qboolean QRE_WriteLightSession (void)
 	emitter_source = target_exists ? qre.target_file : legacy_emitter;
 
 	if (QRE_FileExists (emitter_source))
+	{
 		name_count = RT_LIGHT_ReadNames (emitter_source, names, QRE_SESSION_NAMES_MAX);
+		orig_name_count = name_count;
+	}
 
 	for (i = 0; i < qre.light_touched_count && name_count < QRE_SESSION_NAMES_MAX; i++)
 	{
@@ -9570,7 +10243,7 @@ static qboolean QRE_WriteLightSession (void)
 	if (!out)
 	{
 		QRE_Notify ("cannot write %s", qre.editor_file);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 
 	if (!merged_target)
@@ -9581,6 +10254,7 @@ static qboolean QRE_WriteLightSession (void)
 
 		fprintf (out, "%s", RT_LIGHT_Header ());
 		fprintf (out, "qray_lights:\n");
+		last_char = '\n';
 		for (i = 0; i < name_count; i++)
 		{
 			rt_light_t *l = RT_LIGHT_Find (names[i]);
@@ -9588,18 +10262,27 @@ static qboolean QRE_WriteLightSession (void)
 			if (l && RT_LIGHT_HasFields (l))
 			{
 				RT_LIGHT_WriteEntry (out, l);
+				last_char = '\n';
+				wrote = true;
+			}
+			else if (i < orig_name_count && QRE_LightTouchedIndex (names[i]) >= 0)
+			{
 				wrote = true;
 			}
 		}
 
 		if (QRE_FileExists (level_source))
-			QRE_WriteLevelBlocks (out, level_source, custom_touched ? level : NULL);
+			QRE_WriteLevelBlocks (out, level_source, custom_touched ? level : NULL, &last_char);
 
 		if (custom_touched)
 		{
-			if (QRE_FileExists (level_source) && !wrote)
-				fprintf (out, "\n");
+			if (last_char != '\n')
+			{
+				fputc ('\n', out);
+				last_char = '\n';
+			}
 			QRE_CustomWriteLevel (out, level);
+			last_char = '\n';
 			wrote = true;
 		}
 	}
@@ -9612,32 +10295,36 @@ static qboolean QRE_WriteLightSession (void)
 		qboolean in_lights = false;
 		qboolean lights_closed = false;
 		qboolean level_written = false;
+		qboolean first_line = true;
 
 		if (!in)
 		{
 			fclose (out);
 			remove (qre.editor_file);
-			return false;
+			return QRE_WRITE_ERROR;
 		}
 
 		memset (written, 0, sizeof (written));
 
 		while (fgets (line, sizeof (line), in))
 		{
-			char *p = line;
+			char *start = first_line ? QRE_SkipUtf8Bom (line) : line;
+			char *p = start;
+
+			first_line = false;
 
 			if (skipping)
 			{
-				char *q = line;
+				char *q = start;
 
 				while (*q == ' ' || *q == '\t')
 					q++;
 
-				if (!strncmp (q, "- name:", 7) || !strncmp (q, "name:", 5))
+				if (in_lights && (!strncmp (q, "- name:", 7) || !strncmp (q, "name:", 5)))
 				{
 					skipping = false; // the next block already starts
 				}
-				else if (line[0] == ' ' || line[0] == '\t' || line[0] == '\r' || line[0] == '\n')
+				else if (start[0] == ' ' || start[0] == '\t' || start[0] == '\r' || start[0] == '\n')
 				{
 					continue; // the body of the block that was replaced
 				}
@@ -9650,25 +10337,12 @@ static qboolean QRE_WriteLightSession (void)
 			while (*p == ' ' || *p == '\t')
 				p++;
 
-			if (!strncmp (p, "- name:", 7) || !strncmp (p, "name:", 5))
+			if (in_lights && (!strncmp (p, "- name:", 7) || !strncmp (p, "name:", 5)))
 			{
-				char  name[MAX_QPATH];
-				char *e;
-				int   len;
-				int   touched;
+				char name[MAX_QPATH];
+				int  touched;
 
-				p = strchr (p, ':') + 1;
-				while (*p == ' ' || *p == '\t')
-					p++;
-				e = p;
-				while (*e && *e != '\r' && *e != '\n' && *e != ' ' && *e != '\t')
-					e++;
-				len = (int)(e - p);
-				if (len >= MAX_QPATH)
-					len = MAX_QPATH - 1;
-				memcpy (name, p, (size_t)len);
-				name[len] = '\0';
-				q_strlwr (name);
+				QRE_ParseYamlNameValue (strchr (p, ':') + 1, name, sizeof (name));
 
 				touched = QRE_LightTouchedIndex (name);
 				if (touched >= 0)
@@ -9677,6 +10351,7 @@ static qboolean QRE_WriteLightSession (void)
 					    QRE_LightWriteTouched (out, written, touched) ||
 					    QRE_LightDropTouched (written, touched))
 					{
+						last_char = '\n';
 						wrote = true;
 						skipping = true;
 						continue;
@@ -9684,48 +10359,63 @@ static qboolean QRE_WriteLightSession (void)
 				}
 			}
 
-			if (line[0] != ' ' && line[0] != '\t' && line[0] != '\r' && line[0] != '\n')
+			if (start[0] != ' ' && start[0] != '\t' && start[0] != '\r' && start[0] != '\n')
 			{
-				char *colon = strchr (line, ':');
+				char *colon = strchr (start, ':');
 
-				if (line[0] != '#' && colon)
+				if (start[0] != '#' && colon)
 				{
 					char  key[64];
 					char *e = colon;
 					int   len;
 
-					while (e > line && (e[-1] == ' ' || e[-1] == '\t'))
+					while (e > start && (e[-1] == ' ' || e[-1] == '\t'))
 						e--;
-					len = (int)(e - line);
+					len = (int)(e - start);
 					if (len >= (int)sizeof (key))
 						len = (int)sizeof (key) - 1;
-					memcpy (key, line, (size_t)len);
+					memcpy (key, start, (size_t)len);
 					key[len] = '\0';
 					q_strlwr (key);
 
 					if (!strcmp (key, "qray_lights"))
 					{
 						in_lights = true;
-						fputs (line, out);
+						QRE_FputsTrack (line, out, &last_char);
 						continue;
 					}
 					if (!strcmp (key, "lights") && QRE_NextIsEmitterBody (in))
 					{
 						in_lights = true;
-						fputs ("qray_lights:\n", out); // migrate the old root key
+						QRE_FputsTrack ("qray_lights:\n", out, &last_char); // migrate the old root key
 						continue;
 					}
 
 					if (in_lights && !lights_closed)
 					{
+						in_lights = false;
 						lights_closed = true;
+						if (last_char != '\n')
+						{
+							fputc ('\n', out);
+							last_char = '\n';
+						}
 						if (QRE_LightWriteMissing (out, written) > 0)
+						{
+							last_char = '\n';
 							wrote = true;
+						}
 					}
 
 					if (custom_touched && !level_written && !strcmp (key, level))
 					{
+						if (last_char != '\n')
+						{
+							fputc ('\n', out);
+							last_char = '\n';
+						}
 						QRE_CustomWriteLevel (out, level);
+						last_char = '\n';
 						level_written = true;
 						wrote = true;
 						skipping = true;
@@ -9734,20 +10424,33 @@ static qboolean QRE_WriteLightSession (void)
 				}
 			}
 
-			fputs (line, out);
+			QRE_FputsTrack (line, out, &last_char);
 		}
 
 		if (!lights_closed)
 		{
-			fputc ('\n', out); // the file may not have ended on a newline
+			if (last_char != '\n')
+			{
+				fputc ('\n', out);
+				last_char = '\n';
+			}
 			if (QRE_LightWriteMissing (out, written) > 0)
+			{
+				last_char = '\n';
 				wrote = true;
+			}
 		}
 
 		if (custom_touched && !level_written)
 		{
+			if (last_char != '\n')
+			{
+				fputc ('\n', out);
+				last_char = '\n';
+			}
 			fprintf (out, "\n");
 			QRE_CustomWriteLevel (out, level);
+			last_char = '\n';
 			wrote = true;
 		}
 
@@ -9759,7 +10462,7 @@ static qboolean QRE_WriteLightSession (void)
 	{
 		fclose (out);
 		remove (qre.editor_file);
-		return false;
+		return QRE_WRITE_EMPTY;
 	}
 
 	if (ferror (out) || fflush (out) != 0)
@@ -9767,15 +10470,15 @@ static qboolean QRE_WriteLightSession (void)
 		QRE_Notify ("write error in %s", qre.editor_file);
 		fclose (out);
 		remove (qre.editor_file);
-		return false;
+		return QRE_WRITE_ERROR;
 	}
 	fclose (out);
 
 	Con_Printf ("qr editor: session written to %s\n", qre.editor_file);
-	return true;
+	return QRE_WRITE_WROTE;
 }
 
-static qboolean QRE_WriteSession (void)
+static int QRE_WriteSession (void)
 {
 	// A drag whose mouse-up never arrived (the panel swallowed it when it
 	// opened over the light) is not a committed edit: the write must see the
@@ -9788,27 +10491,40 @@ static qboolean QRE_WriteSession (void)
 	return QRE_WriteMergedSession (qre.touched, qre.touched_count);
 }
 
-static void QRE_RestoreModeState (void)
+static void QRE_RestoreModeState (qboolean to_disk)
 {
 	if (qre.mode == QRE_MODE_LIGHT)
 	{
-		QRE_RestoreLightSnapshot ();
-		RT_SkySettings_EndSession ();
-		qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
+		QRE_RestoreLightSnapshot (to_disk);
+		if (to_disk)
+		{
+			RT_SkySettings_EndSession ();
+			qre.sky_global = RT_SkySettings_LevelHasBlock () ? false : true;
+		}
 	}
 	else
 	{
-		QRE_RestoreSnapshot ();
+		QRE_RestoreSnapshot (to_disk);
 		QRE_ReapplyTouched ();
-		QRE_WaterRestore ();
+		QRE_WaterRestore (to_disk);
+	}
+
+	if (to_disk && qre.applied_wrote_config)
+	{
+		Host_WriteConfiguration ();
+		qre.applied_wrote_config = false;
 	}
 }
 
 static void QRE_ClearSessionState (void)
 {
 	qre.touched_count = 0;
+	qre.applied_touched_count = 0;
 	qre.light_touched_count = 0;
+	qre.applied_light_touched_count = 0;
 	qre.force_write = false;
+	qre.has_applied = false;
+	qre.applied_wrote_config = false;
 	qre.dirty_count = 0;
 	memset (qre.dirty_full, 0, sizeof (qre.dirty_full));
 	memset (qre.dirty_light, 0, sizeof (qre.dirty_light));
@@ -9822,6 +10538,12 @@ static void QRE_DtalDebugOff (void)
 
 static void QRE_BackToChooser (void)
 {
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.back_to_chooser = true;
+		return;
+	}
+
 	QRE_CursorMode (true);
 	QRE_TextureErrorClear ();
 	qre.texture_browser_open = false;
@@ -9834,6 +10556,8 @@ static void QRE_BackToChooser (void)
 	qre.regen_pending = false;
 	qre.prompt_from_flying = false;
 	qre.panel_open = true;
+
+	QRE_FrameOverrideRelease (true);
 
 	qre.pick_model = NULL;
 	qre.pick_surf = NULL;
@@ -10012,7 +10736,7 @@ static void QRE_RegenerateLights (void)
 	q_strlcpy (qre.editor_file, editor, sizeof (qre.editor_file));
 	q_strlcpy (qre.backup_file, backup, sizeof (qre.backup_file));
 
-	if (!QRE_WriteMergedSession (qre.touched, qre.touched_count) ||
+	if (QRE_WriteMergedSession (qre.touched, qre.touched_count) != QRE_WRITE_WROTE ||
 	    (QRE_FileExists (target) && !QRE_CopyFile (target, backup)) ||
 	    !QRE_CopyFile (editor, target))
 	{
@@ -10091,6 +10815,7 @@ static void QRE_ResetAll (void)
 		RT_SkySettings_AdoptGlobals ();
 		RT_CustomLights_ChangeMap (cl.mapname);
 		Fog_NewMap ();
+		RT_CustomLights_ApplyFog ();
 	}
 	else
 	{
@@ -10116,20 +10841,38 @@ static void QRE_ResetAll (void)
 static void QRE_SessionSave (void)
 {
 	const qboolean light = (qre.mode == QRE_MODE_LIGHT) ? true : false;
+	qboolean       globals;
+	qboolean       entries;
+	qboolean       had_target;
+
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.session_save = true;
+		return;
+	}
 
 	// the live cvars belong to the scope they were edited in, so the session
 	// sees the edit and the writer knows what the level's own set now is
 	if (light)
 		RT_SkySettings_CaptureScope ();
 
-	const qboolean globals = light ? (QRE_GlobalsTouched () || qre.sky_global) : QRE_WaterTouched ();
-	const qboolean entries = light ? (qre.light_touched_count > 0 || QRE_CustomTouched ()) : (qre.touched_count > 0);
-	const qboolean had_target = QRE_FileExists (qre.target_file);
+	globals = light
+	          ? (QRE_GlobalsTouched () || (qre.sky_global && QRE_SkyTouched ()) || qre.applied_wrote_config)
+	          : (QRE_WaterTouched () || qre.applied_wrote_config);
+	entries = light
+	          ? (qre.light_touched_count > 0 || QRE_CustomTouched () || qre.force_write)
+	          : (qre.touched_count > 0);
+	had_target = QRE_FileExists (qre.target_file);
 
-	if (entries && !QRE_WriteSession ())
+	if (entries)
 	{
-		QRE_Notify ("the session could not be written");
-		return;
+		const int write_res = QRE_WriteSession ();
+
+		if (write_res == QRE_WRITE_ERROR)
+		{
+			QRE_Notify ("the session could not be written");
+			return;
+		}
 	}
 
 	if (globals)
@@ -10137,15 +10880,10 @@ static void QRE_SessionSave (void)
 
 	if (!QRE_FileExists (qre.editor_file))
 	{
-		if (globals)
-		{
-			QRE_BackToChooser ();
-			QRE_Notify ("settings written to the config");
-		}
-		else
-		{
-			QRE_Notify ("nothing to save");
-		}
+		if (light)
+			RT_SkySettings_CommitSession (qre.sky_global);
+		QRE_BackToChooser ();
+		QRE_Notify (globals ? "settings written to the config" : "nothing to save");
 		return;
 	}
 
@@ -10184,7 +10922,13 @@ static void QRE_SessionSave (void)
 // screen; nothing on disk is touched.
 static void QRE_SessionDiscard (void)
 {
-	QRE_RestoreModeState ();
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.session_discard = true;
+		return;
+	}
+
+	QRE_RestoreModeState (true);
 	remove (qre.editor_file);
 	QRE_BackToChooser ();
 	QRE_Notify ("changes discarded");
@@ -10197,6 +10941,12 @@ static void QRE_RequestExit (void)
 {
 	qboolean touched;
 
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.request_exit = true;
+		return;
+	}
+
 	if (qre.choosing)
 	{
 		QRE_StopEditor (false);
@@ -10206,9 +10956,11 @@ static void QRE_RequestExit (void)
 	if (qre.mode == QRE_MODE_LIGHT)
 		RT_SkySettings_CaptureScope ();
 
-	touched = (qre.mode == QRE_MODE_LIGHT) ? QRE_LightSessionTouched () : (qre.touched_count > 0 || QRE_WaterTouched ());
+	touched = (qre.mode == QRE_MODE_LIGHT)
+	          ? (QRE_LightSessionTouched () || qre.force_write)
+	          : (qre.touched_count > 0 || QRE_WaterTouched ());
 
-	if (!touched && !QRE_FileExists (qre.editor_file))
+	if (!touched && !qre.has_applied && !qre.applied_wrote_config && !QRE_FileExists (qre.editor_file))
 	{
 		QRE_BackToChooser ();
 		return;
@@ -11104,12 +11856,46 @@ static void QRE_TextureBrowserPumpBuild (void)
 	}
 }
 
-static void QRE_TextureBrowserCancelBuild (void)
+static void QRE_TextureBrowserShutdownTasks (void)
 {
 	if (qre_textbrowser_build_job)
 		Atomic_StoreUInt32 (&qre_textbrowser_build_job->cancel, 1);
+	if (qre_textbrowser_build_task != INVALID_TASK_HANDLE)
+	{
+		Task_Join (qre_textbrowser_build_task, SDL_MUTEX_MAXWAIT);
+		qre_textbrowser_build_task = INVALID_TASK_HANDLE;
+	}
+	if (qre_textbrowser_build_job)
+	{
+		QRE_TextureBrowserFreeBuildJob (qre_textbrowser_build_job);
+		qre_textbrowser_build_job = NULL;
+	}
 	qre_textbrowser_build_wanted = false;
 	qre_textbrowser_loading = false;
+
+	if (qre_textbrowser_preview_job)
+		Atomic_StoreUInt32 (&qre_textbrowser_preview_job->cancel, 1);
+	if (qre_textbrowser_preview_task != INVALID_TASK_HANDLE)
+	{
+		Task_Join (qre_textbrowser_preview_task, SDL_MUTEX_MAXWAIT);
+		qre_textbrowser_preview_task = INVALID_TASK_HANDLE;
+	}
+	if (qre_textbrowser_preview_job)
+	{
+		int i;
+
+		for (i = 0; i < qre_textbrowser_preview_job->count; i++)
+		{
+			if (qre_textbrowser_preview_job->results[i].thumb)
+			{
+				Mem_Free (qre_textbrowser_preview_job->results[i].thumb);
+				qre_textbrowser_preview_job->results[i].thumb = NULL;
+			}
+		}
+		Mem_Free (qre_textbrowser_preview_job);
+		qre_textbrowser_preview_job = NULL;
+	}
+	qre_textbrowser_preview_queue_count = 0;
 }
 
 static void QRE_OpenTextureBrowser (int g, int p)
@@ -11165,18 +11951,58 @@ static void QRE_StopEditor (qboolean restore)
 		return;
 	}
 
-	// revert whatever was not applied, then restore the player's view
+	// revert whatever was not saved, then restore the player's view
 	QRE_CancelLightDrag ();
 	QRE_CustomGizmoCancel ();
 	QRE_DtalDebugOff ();
-	if (restore)
-		QRE_RestoreModeState ();
+	if (!qre.choosing)
+	{
+		if (restore)
+		{
+			QRE_RestoreModeState (true);
+		}
+		else
+		{
+			// The level went away or is being replaced: do not reload map
+			// textures or touch map-scoped lists, but still roll back global
+			// tables, cvars and config.cfg to the disk baseline.
+			if (qre.mode == QRE_MODE_LIGHT)
+			{
+				if (qre.snap_disk_lights)
+				{
+					memcpy (RT_LIGHT_List (NULL), qre.snap_disk_lights,
+					        (size_t)qre.snap_disk_light_count * sizeof (rt_light_t));
+					RT_LIGHT_SetCount (qre.snap_disk_light_count);
+				}
+				QRE_GlobalsRestore (true);
+			}
+			else
+			{
+				if (qre.snap_disk_global)
+				{
+					int map_count = 0;
+
+					RT_MAT_GetList (RT_MAT_LIST_MAP, &map_count);
+					memcpy (RT_MAT_GetList (RT_MAT_LIST_GLOBAL, NULL), qre.snap_disk_global,
+					        (size_t)qre.snap_disk_global_count * sizeof (rt_material_t));
+					RT_MAT_SetListCounts (qre.snap_disk_global_count, map_count);
+				}
+				QRE_WaterRestore (true);
+			}
+			RT_SkySettings_EndSession ();
+			if (qre.applied_wrote_config)
+			{
+				Host_WriteConfiguration ();
+				qre.applied_wrote_config = false;
+			}
+		}
+	}
 
 	// with the editor gone the sky settings are the level's and the config's
 	// again, not a session's, and the frame the panel drove belongs to the
-	// entity again
+	// entity again (skip entity writeback when !restore, e.g. map change)
 	RT_SkySettings_EndSession ();
-	QRE_FrameOverrideRelease ();
+	QRE_FrameOverrideRelease (restore);
 
 	if (qre.entity_preview_model != NULL && cl.viewent.model == qre.entity_preview_model)
 		cl.viewent.model = NULL;
@@ -11203,7 +12029,7 @@ static void QRE_StopEditor (qboolean restore)
 	qre.hover_ent = NULL;
 	qre.hover_glt = NULL;
 
-	QRE_TextureBrowserCancelBuild ();
+	QRE_TextureBrowserShutdownTasks ();
 	QRE_FreePreview ();
 	QRE_TexturePreviewClear ();
 
@@ -11212,8 +12038,10 @@ static void QRE_StopEditor (qboolean restore)
 	// editor did not save goes away with it
 	if (sv.paused)
 		sv.paused = qre.sv_paused_prev;
-	if (!restore)
+	if (qre.editor_file[0])
 		remove (qre.editor_file);
+	QRE_ClearSessionState ();
+	QRE_ResetActions ();
 
 	VectorCopy (qre.player_viewangles, cl.viewangles);
 
@@ -11232,16 +12060,23 @@ static void QRE_StartMode (int mode)
 {
 	const char *name = (mode == QRE_MODE_LIGHT) ? "light" : "material";
 
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.start_mode = mode;
+		return;
+	}
+
 	if (mode == QRE_MODE_LIGHT)
 		QRE_DtalDebugOff ();
 
 	qre.choosing = false;
 	qre.mode = mode;
+	QRE_ClearSessionState ();
 
 	if (mode == QRE_MODE_LIGHT)
 	{
-		QRE_TakeLightSnapshot ();
-		QRE_TakeGlobalsSnapshot ();
+		QRE_TakeLightSnapshot (true);
+		QRE_TakeGlobalsSnapshot (true);
 
 		// the sky settings the level carries are the session's starting point:
 		// a level with its own block opens in level scope and one without
@@ -11260,8 +12095,8 @@ static void QRE_StartMode (int mode)
 	}
 	else
 	{
-		QRE_TakeSnapshot ();
-		QRE_TakeWaterSnapshot ();
+		QRE_TakeSnapshot (true);
+		QRE_TakeWaterSnapshot (true);
 
 		// the session files: the target is the gamedir's own qray.materials.yaml
 		// (for a mod that is the mod's file, which the loader reads after id1's
@@ -11308,12 +12143,9 @@ static void QRE_StartEditor (void)
 
 	memset (&qre, 0, sizeof (qre));
 	memset (qre_instances, 0, sizeof (qre_instances));
-	memset (&qre_actions, 0, sizeof (qre_actions));
-	QRE_TextureBrowserCancelBuild ();
+	QRE_ResetActions ();
+	QRE_TextureBrowserShutdownTasks ();
 	qre_textbrowser_built = false;
-	qre_actions.cursor_mode = -1;
-	qre_actions.pause_world = -1;
-	qre_actions.browse_group = -1;
 	qre_instance_cur = 0;
 	qre.active = true;
 	qre.panel_open = false;
@@ -11437,7 +12269,7 @@ static void QRE_DevmodeChanged_f (cvar_t *var)
 	if (qre.active)
 	{
 		Con_Printf ("qr editor: closed, qr_devmode is off\n");
-		QRE_StopEditor (false);
+		QRE_StopEditor ((cls.state == ca_connected && cl.worldmodel != NULL) ? true : false);
 	}
 
 	QRE_DevmodeCommands (false);
@@ -11660,6 +12492,7 @@ void QR_Editor_LightGrab (void)
 				return;
 
 			*inst = *shared;
+			q_strlcpy (inst->name, qre.light_drag_key, sizeof (inst->name));
 			qre.light_drag_created = true;
 		}
 
@@ -11875,17 +12708,21 @@ void QR_Editor_OnNewMap (void)
 
 void QR_Editor_Shutdown (void)
 {
+	// Always cancel and join background catalog/preview worker tasks even if
+	// the editor already closed, so no worker can outlive teardown.
+	QRE_TextureBrowserShutdownTasks ();
+
 	// The host is going down without a session: the editor's own buffers (the
 	// material snapshots and the preview pixels and their materials) go back
 	// here, since QRE_StopEditor -- the usual owner of that teardown -- also
 	// re-applies the touched materials and the renderer is what is leaving.
 	if (qre.active)
 	{
-		QRE_TextureBrowserCancelBuild ();
 		QRE_TexturePreviewClear ();
 		QRE_FreePreview ();
 		QRE_FreeSnapshot ();
 		QRE_FreeLightSnapshot ();
+		QRE_ResetActions ();
 		qre.active = false;
 		qre.panel_open = false;
 		qre.torch = false;

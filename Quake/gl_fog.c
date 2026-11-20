@@ -343,6 +343,7 @@ called whenever a map is loaded
 */
 void Fog_NewMap (void)
 {
+	Cvar_SetROM ("fog_enabled", "0");
 	Fog_ParseWorldspawn (); // for global fog
 	Fog_MarkModels ();      // for volumetric fog
 }

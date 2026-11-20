@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 
@@ -70,6 +72,125 @@ void TestDrawList(unsigned frame, unsigned rectangles)
     Require(ImGui::GetDrawData()->TotalVtxCount == int(rectangles * 4),
             "rendered draw data must preserve all vertices");
     expectedDrawList = nullptr;
+}
+
+void TestNullContextGuards(SDL_Window *window)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+
+    Require(QR_GUI_Ready() == 0, "GUI bridge must report not ready before init / after shutdown");
+    QR_GUI_Notify("guard test");
+    QR_GUI_Notify(nullptr);
+
+    float mx = 42.0f;
+    float my = 99.0f;
+    QR_GUI_GetMousePos(&mx, &my);
+    Require(mx == 0.0f && my == 0.0f, "QR_GUI_GetMousePos must zero outputs when not ready");
+    QR_GUI_GetMousePos(nullptr, nullptr);
+
+    Require(QR_GUI_AnyItemActive() == 0, "QR_GUI_AnyItemActive must return 0 when not ready");
+    Require(QR_GUI_CtrlDown() == 0, "QR_GUI_CtrlDown must return 0 when not ready");
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    Require(QR_GUI_BeginFrame(1, 1.0f / 60.0f, 0, 0, 640, 480, 480) == 0,
+            "QR_GUI_BeginFrame must fail cleanly when not ready");
+
+    // Early-return init failures must take ownership of font_data without leaking or creating materials.
+    void *nullWinFont = std::malloc(128);
+    Require(nullWinFont != nullptr, "test font allocation must succeed");
+    std::memset(nullWinFont, 0x5A, 128);
+    QR_GUI_Init(nullptr, fakeInstance, nullWinFont, 128);
+    Require(QR_GUI_Ready() == 0, "QR_GUI_Init must reject NULL SDL window");
+
+    if (window != nullptr)
+    {
+        void *nullInstFont = std::malloc(128);
+        Require(nullInstFont != nullptr, "test font allocation must succeed");
+        std::memset(nullInstFont, 0x5A, 128);
+        QR_GUI_Init(window, nullptr, nullInstFont, 128);
+        Require(QR_GUI_Ready() == 0, "QR_GUI_Init must reject NULL QrInstance");
+    }
+
+    Require(materialCreates == beforeCreates && materialDestroys == beforeDestroys,
+            "failed QR_GUI_Init calls must not allocate or destroy materials");
+}
+
+void TestFontFallback(SDL_Window *window, size_t size, unsigned char fill, const char *label)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+
+    void *buf = std::malloc(size);
+    Require(buf != nullptr, "font fallback test allocation must succeed");
+    std::memset(buf, fill, size);
+
+    QR_GUI_Init(window, fakeInstance, buf, static_cast<int>(size));
+    Require(QR_GUI_Ready() != 0, label);
+
+    const ImGuiIO &io = ImGui::GetIO();
+    Require(io.ConfigErrorRecoveryEnableAssert,
+            "QR_GUI_Init must restore ImGui error-recovery assert setting");
+    Require(io.FontDefault != nullptr, "fallback font must be assigned as io.FontDefault");
+    Require(io.Fonts->Fonts.Size > 0 && io.Fonts->Fonts[0] == io.FontDefault,
+            "primary 19px fallback font must be Fonts[0] ahead of overlay mono fonts");
+    Require(io.FontDefault->LegacySize == 19.0f,
+            "fallback default font must preserve 19px UI sizing");
+
+    TestDrawList(1, 8);
+    QR_GUI_Shutdown();
+    Require(QR_GUI_Ready() == 0, "QR_GUI_Shutdown must clear ready flag");
+    Require(materialCreates == beforeCreates + 1 && materialDestroys == beforeDestroys + 1,
+            "font fallback cycle must keep font atlas lifetime balanced");
+}
+
+void TestMainThreadPrepareAndDeferredPlatform(SDL_Window *window)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+
+    QR_GUI_Init(window, fakeInstance, nullptr, 0);
+    Require(QR_GUI_Ready() != 0, "GUI bridge must initialize for main-thread prepare test");
+
+    // Duplicate init while ready must free font_data and leave state untouched.
+    void *dupFont = std::malloc(128);
+    Require(dupFont != nullptr, "duplicate init font allocation must succeed");
+    std::memset(dupFont, 0x33, 128);
+    QR_GUI_Init(window, fakeInstance, dupFont, 128);
+    Require(materialCreates == beforeCreates + 1, "duplicate QR_GUI_Init must be a no-op");
+
+    const ImGuiIO &io = ImGui::GetIO();
+    Require((io.BackendFlags & ImGuiBackendFlags_HasGamepad) == 0,
+            "SDL2 gamepad polling must be disabled");
+    Require(ImGui::GetPlatformIO().Platform_OpenInShellFn == nullptr,
+            "Platform_OpenInShellFn must be disabled for worker-thread safety");
+
+    // Repeated idle main-thread prepares without BeginFrame must be safe.
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    TestDrawList(1, 8);
+
+    // Deferred clipboard writes must update cache immediately and flush to SDL on the main thread.
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    Require(QR_GUI_BeginFrame(2, 1.0f / 60.0f, 0, 0, 3840, 2160, 2160) != 0,
+            "clipboard regression frame must begin");
+    ImGui::SetClipboardText("quakeray-deferred-clipboard");
+    const char *cached = ImGui::GetClipboardText();
+    Require(cached != nullptr && std::strcmp(cached, "quakeray-deferred-clipboard") == 0,
+            "deferred clipboard write must be visible immediately through the cache");
+    QR_GUI_EndFrame();
+
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    char *sdlClip = SDL_GetClipboardText();
+    Require(sdlClip != nullptr && std::strcmp(sdlClip, "quakeray-deferred-clipboard") == 0,
+            "QR_GUI_PrepareMainThreadFrame must flush deferred clipboard writes to SDL");
+    SDL_free(sdlClip);
+
+    QR_GUI_Shutdown();
+    Require(materialCreates == beforeCreates + 1 && materialDestroys == beforeDestroys + 1,
+            "main-thread prepare test must keep font atlas lifetime balanced");
 }
 
 }
@@ -153,6 +274,9 @@ int main()
         Require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == 0, SDL_GetError());
         window = SDL_CreateWindow("GUI draw regression", 0, 0, 3840, 2160, SDL_WINDOW_HIDDEN);
         Require(window != nullptr, SDL_GetError());
+
+        TestNullContextGuards(window);
+
         QR_GUI_Init(window, reinterpret_cast<void *>(uintptr_t(1)), nullptr, 0);
         Require(QR_GUI_Ready() != 0, "real GUI bridge must initialize");
         Require(sizeof(ImDrawIdx) == 2, "regression must exercise 16-bit ImGui indices");
@@ -165,9 +289,16 @@ int main()
         TestDrawList(5, 40000);
         QR_GUI_Shutdown();
         Require(materialCreates == 1 && materialDestroys == 1, "font atlas lifetime must remain balanced");
+
+        TestNullContextGuards(window);
+        TestFontFallback(window, 16, 0xAB, "short TTF (<= 100 bytes) must fall back to default 19px font");
+        TestFontFallback(window, 256, 0xDE, "corrupt TTF (> 100 bytes) must fall back without assert or UAF");
+        TestMainThreadPrepareAndDeferredPlatform(window);
+        TestNullContextGuards(window);
+
         SDL_DestroyWindow(window);
         SDL_Quit();
-        std::cout << "GUI bridge tests passed: 16-bit rollover, multiple offsets, command indices and attributes\n";
+        std::cout << "GUI bridge tests passed: 16-bit rollover, null-context guards, font fallback, and main-thread SDL prep\n";
         return 0;
     }
     catch (const std::exception &error)
