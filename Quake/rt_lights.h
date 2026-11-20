@@ -89,6 +89,9 @@ qboolean RT_LIGHT_Write (const char *path, char (*names)[MAX_QPATH], int count);
 
 // True when at least one field is authored (what the writer asks).
 qboolean RT_LIGHT_HasFields (const rt_light_t *l);
+// True when name (normalized) had an emitter override loaded from a lower-
+// precedence lights file (before com_gamedir's loose qray.lights.yaml).
+qboolean RT_LIGHT_HasInheritedOverride (const char *name);
 
 // ----- the lights of the frame, for the editor's wireframes and picking -----
 
@@ -267,7 +270,10 @@ void RT_SkySettings_SetScope (qboolean level);
 void RT_SkySettings_SetScopeNoCapture (qboolean level);
 // Whether the active sky scope is level-local (true) or global (false).
 qboolean RT_SkySettings_IsLevelScope (void);
-// Whether this session changed the sky settings or their scope at all.
+// Whether this session changed the level's "sky:" block, the global config
+// sky settings, or either of them.
+qboolean RT_SkySettings_LevelDirty (void);
+qboolean RT_SkySettings_GlobalDirty (void);
 qboolean RT_SkySettings_SessionDirty (void);
 // The live values belong to the active set, for the session's writer.
 void RT_SkySettings_CaptureScope (void);

@@ -456,6 +456,7 @@ void RT_ClusterVolumeVerifyStats (uint64_t *samples, uint64_t *mismatch, uint64_
 void RT_ClusterVolumeResetVerify (void);
 void RT_PointClusterCacheSetEnabled (qboolean enabled);
 void RT_BrushClusterCacheReset (void);
+void RT_InvalidateSurfacePackCache (void);
 void RT_ClusterLightReport_f (void);
 void RT_ClusterLists_f (void);
 void RT_ClusterLightDumpHeader (FILE *f);

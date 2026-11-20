@@ -75,6 +75,7 @@ extern cvar_t crosshair_size;
 extern cvar_t rt_dtal_debug;
 
 qboolean scr_initialized; // ready to draw
+static unsigned int scr_gui_frame_serial;
 
 qpic_t *scr_net;
 qpic_t *scr_turtle;
@@ -1061,6 +1062,8 @@ static void SCR_DrawGUI (void *unused)
 		if (QR_Editor_Active ())
 		{
 			SCR_DrawConsole (cbx);
+			if (key_dest == key_menu)
+				M_Draw (cbx);
 			QR_Editor_DrawPanel (cbx);
 		}
 		else if (PhotoCam_Active ())
@@ -1102,12 +1105,12 @@ static void SCR_DrawGUI (void *unused)
 			const qboolean record_on = RT_StatsRecording ();
 
 			if ((stats_on || gui_on || record_on) &&
-			    QR_GUI_BeginFrame ((unsigned int) host_framecount, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
+			    QR_GUI_BeginFrame (scr_gui_frame_serial, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
 			{
 				RT_StatsDrawGui ();
 				if (SNDEQ_DialogActive ())
 					SNDEQ_DrawDialog ();
-				RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
+				RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), scr_gui_frame_serial, (float) host_frametime,
 				                     glx, gly, glwidth, glheight, vid.height);
 				QR_GUI_EndFrame ();
 			}
@@ -1213,6 +1216,7 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 		// read host state; SDL2 ImGui platform work also runs here before submit
 		SNDEQ_DrainActions ();
 		QR_Editor_FlushDirty ();
+		scr_gui_frame_serial++;
 		QR_GUI_PrepareMainThreadFrame ((float) host_frametime);
 		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);

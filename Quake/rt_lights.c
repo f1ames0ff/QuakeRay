@@ -20,6 +20,8 @@ extern cvar_t rt_cluster_dlights;
 
 static rt_light_t rt_lights[RT_LIGHT_CAP];
 static int        rt_light_count = 0;
+static char       rt_light_inherited_names[RT_LIGHT_CAP][MAX_QPATH];
+static int        rt_light_inherited_count = 0;
 static qboolean   rt_light_initialized = false;
 
 // The lights uploaded in the current frame (see RT_TRACK_Light): the counter is
@@ -312,6 +314,27 @@ qboolean RT_LIGHT_HasFields(const rt_light_t *l)
     return l && (l->has_radius || l->has_intensity || l->has_offset || l->has_color ||
                  l->force_rasterize || l->has_style || l->has_spot || l->has_dir || l->has_angles ||
                  !l->group_edit);
+}
+
+qboolean RT_LIGHT_HasInheritedOverride(const char *name)
+{
+    char normalized[MAX_QPATH];
+    int  i;
+
+    if (!rt_light_initialized || !name || !name[0])
+    {
+        return false;
+    }
+
+    rt_light_norm(name, normalized, sizeof(normalized));
+    for (i = 0; i < rt_light_inherited_count; i++)
+    {
+        if (!strcmp(rt_light_inherited_names[i], normalized))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 rt_light_t *RT_LIGHT_FindEmitter(const char *name, uint64_t uniqueID)
@@ -1057,11 +1080,33 @@ static void rt_light_load_directory(const char *dir)
     rt_light_load_file_if_present(path);
 }
 
+static void rt_light_snapshot_inherited(void)
+{
+    int i;
+
+    rt_light_inherited_count = 0;
+    for (i = 0; i < rt_light_count && rt_light_inherited_count < RT_LIGHT_CAP; i++)
+    {
+        if (!rt_lights[i].valid || !RT_LIGHT_HasFields(&rt_lights[i]))
+        {
+            continue;
+        }
+        rt_light_norm(rt_lights[i].name,
+                      rt_light_inherited_names[rt_light_inherited_count],
+                      sizeof(rt_light_inherited_names[0]));
+        if (rt_light_inherited_names[rt_light_inherited_count][0])
+        {
+            rt_light_inherited_count++;
+        }
+    }
+}
+
 void RT_LIGHT_Reload(void)
 {
     searchpath_t **prec;
     int            count = 0;
     int            i;
+    int            kept = 0;
 
     if (!rt_light_initialized)
     {
@@ -1069,6 +1114,7 @@ void RT_LIGHT_Reload(void)
     }
 
     rt_light_count = 0;
+    rt_light_inherited_count = 0;
 
     prec = rt_light_build_searchpath_order(&count);
     for (i = 0; i < count; i++)
@@ -1097,8 +1143,37 @@ void RT_LIGHT_Reload(void)
 
     if (com_gamedir[0])
     {
-        rt_light_load_directory(com_gamedir);
+        char path[MAX_OSPATH];
+
+        // Legacy com_gamedir/lights.yaml sits below com_gamedir/qray.lights.yaml.
+        q_snprintf(path, sizeof(path), "%s/lights.yaml", com_gamedir);
+        rt_light_load_file_if_present(path);
+
+        rt_light_snapshot_inherited();
+
+        q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", com_gamedir);
+        rt_light_load_file_if_present(path);
     }
+    else
+    {
+        rt_light_snapshot_inherited();
+    }
+
+    // Drop cleared entries (e.g. a mod's "- name: <emitter>\n  group_edit: true"
+    // clearing an inherited override) so they do not shadow parent/group fallbacks.
+    for (i = 0; i < rt_light_count; i++)
+    {
+        if (!rt_lights[i].valid || !RT_LIGHT_HasFields(&rt_lights[i]))
+        {
+            continue;
+        }
+        if (kept != i)
+        {
+            rt_lights[kept] = rt_lights[i];
+        }
+        kept++;
+    }
+    rt_light_count = kept;
 }
 
 void RT_LIGHT_Init(void)
@@ -1115,6 +1190,7 @@ void RT_LIGHT_Shutdown(void)
 {
     rt_light_initialized = false;
     rt_light_count = 0;
+    rt_light_inherited_count = 0;
 }
 
 int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
@@ -1374,23 +1450,29 @@ void RT_CustomLights_Remove(int index)
     rt_custom_light_count--;
 }
 
-// "maps/start.bsp" and "start" both name the level "start".
+// "maps/start.bsp" and "start" both name the level "start"; map names that
+// contain dots (e.g. "ad_v1.8" / "maps/ad_v1.8.bsp") strip only a trailing ".bsp".
 void RT_CustomLights_LevelKey(const char *mapname, char *out, size_t outsize)
 {
-    const char *base = mapname, *dot, *p;
+    const char *base, *p;
     size_t      len;
+
+    if (!out || outsize == 0)
+        return;
 
     if (!mapname)
         mapname = "";
 
+    base = mapname;
     for (p = mapname; *p; p++)
     {
         if (*p == '/' || *p == '\\')
             base = p + 1;
     }
 
-    dot = strrchr(base, '.');
-    len = dot ? (size_t)(dot - base) : strlen(base);
+    len = strlen(base);
+    if (len >= 4 && !q_strcasecmp(base + len - 4, ".bsp"))
+        len -= 4;
     if (len >= outsize)
         len = outsize - 1;
 
@@ -1548,8 +1630,8 @@ static const char *const rt_sky_names[] = {
     "rt_sky_clouds", "rt_sky_clouds_color", "rt_sky_clouds_alpha",
     "rt_sky_clouds_coverage", "rt_sky_clouds_density", "rt_sky_clouds_speed",
     "rt_sky_clouds_quality", "rt_sky_clouds_height", "rt_sky_clouds_thickness",
-    "rt_physical_sun", "rt_sky_sun", "rt_sky_sun_color", "rt_sky_sun_size",
-    "rt_sky_sun_pitch", "rt_sky_sun_yaw",
+    "rt_physical_sun", "rt_sky_sun", "rt_sky_sun_disc", "rt_sky_sun_color",
+    "rt_sky_sun_size", "rt_sky_sun_pitch", "rt_sky_sun_yaw",
     "rt_sky_godrays", "rt_sky_godrays_intensity", "rt_sky_godrays_sky_threshold",
 };
 
@@ -1576,7 +1658,6 @@ static char     rt_sky_session_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 static char     rt_sky_session_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 static qboolean rt_sky_session_set[RT_SKY_COUNT];
 static qboolean rt_sky_session_globals_ready;
-static qboolean rt_sky_session_level_mode;
 static qboolean rt_sky_session_block;
 
 // The editor session's Cancel checkpoint (updated on Apply, leaving the disk
@@ -1705,7 +1786,19 @@ void RT_SkySettings_ApplyParsed(void)
     int i;
 
     if (!rt_sky_globals_ready)
+    {
         RT_SkySettings_CaptureGlobals();
+    }
+    else if (!rt_sky_session_active)
+    {
+        // Refresh globals from live cvars for every key not overridden by the
+        // previous level's sky block, so Options/console edits persist across maps.
+        for (i = 0; i < RT_SKY_COUNT; i++)
+        {
+            if (!rt_sky_level_set[i])
+                q_strlcpy(rt_sky_globals[i], RT_SkySettings_Live(i), RT_SKY_VALUE_MAX);
+        }
+    }
 
     Cvar_SetConfigValueProvider(RT_SkySettings_ConfigValue);
 
@@ -1756,17 +1849,20 @@ qboolean RT_SkySettings_IsLevelScope(void)
     return rt_sky_level_mode;
 }
 
-// Whether this session changed the sky settings or their scope at all.
-qboolean RT_SkySettings_SessionDirty(void)
+// Whether this session changed the level's "sky:" block (either editing values
+// in level scope, or switching to global scope to drop an existing level block).
+// Pure global-scope edits when the level has no block return false.
+qboolean RT_SkySettings_LevelDirty(void)
 {
     int i;
 
     if (!rt_sky_session_active)
         return false;
 
-    if (rt_sky_session_globals_ready != rt_sky_globals_ready ||
-        rt_sky_session_level_mode != rt_sky_level_mode ||
-        rt_sky_session_block != rt_sky_level_block)
+    if (!rt_sky_level_mode)
+        return rt_sky_session_block ? true : false;
+
+    if (rt_sky_session_block != rt_sky_level_block)
         return true;
 
     for (i = 0; i < RT_SKY_COUNT; i++)
@@ -1775,11 +1871,38 @@ qboolean RT_SkySettings_SessionDirty(void)
             return true;
         if (rt_sky_level_set[i] && strcmp(rt_sky_session_values[i], rt_sky_level_values[i]))
             return true;
-        if (rt_sky_session_globals_ready && strcmp(rt_sky_session_globals[i], rt_sky_globals[i]))
+    }
+
+    return false;
+}
+
+// Whether this session changed the global (config.cfg) sky settings.
+qboolean RT_SkySettings_GlobalDirty(void)
+{
+    int i;
+
+    if (!rt_sky_session_active)
+        return false;
+
+    if (rt_sky_session_globals_ready != rt_sky_globals_ready)
+        return true;
+
+    if (!rt_sky_session_globals_ready)
+        return false;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        if (strcmp(rt_sky_session_globals[i], rt_sky_globals[i]))
             return true;
     }
 
     return false;
+}
+
+// Whether this session changed the sky settings (either level or global).
+qboolean RT_SkySettings_SessionDirty(void)
+{
+    return (RT_SkySettings_LevelDirty() || RT_SkySettings_GlobalDirty()) ? true : false;
 }
 
 // The level's block as the session writes it: its own set, which the capture
@@ -1834,7 +1957,6 @@ void RT_SkySettings_BeginSession(void)
     }
 
     rt_sky_session_block = rt_sky_level_block;
-    rt_sky_session_level_mode = rt_sky_level_mode;
     RT_SkySettings_SaveCheckpointState();
     rt_sky_session_active = true;
 }

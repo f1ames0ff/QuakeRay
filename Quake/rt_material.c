@@ -5,6 +5,8 @@
 #include "rt_material.h"
 #include "rt_pkz.h"
 
+#include <errno.h>
+
 #ifndef _WIN32
 #include <dirent.h>
 #endif
@@ -75,20 +77,23 @@ static void rt_load_file_free(byte *data)
     Mem_Free(data);
 }
 
+#define RT_TGA_MAX_DIM 16384
+
 static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
 {
-    if (len < 18)
+    if (!buf || len < 18)
     {
         return NULL;
     }
 
-    const byte id_length = buf[0];
-    const byte colormap_type = buf[1];
-    const byte image_type = buf[2];
-    const int width = buf[12] | (buf[13] << 8);
-    const int height = buf[14] | (buf[15] << 8);
-    const byte pixel_size = buf[16];
-    const byte attributes = buf[17];
+    const size_t ulen = (size_t)len;
+    const byte   id_length = buf[0];
+    const byte   colormap_type = buf[1];
+    const byte   image_type = buf[2];
+    const int    width = (int)buf[12] | ((int)buf[13] << 8);
+    const int    height = (int)buf[14] | ((int)buf[15] << 8);
+    const byte   pixel_size = buf[16];
+    const byte   attributes = buf[17];
 
     if (colormap_type != 0)
     {
@@ -102,41 +107,75 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
     {
         return NULL;
     }
-    if (width <= 0 || height <= 0)
+    if (width <= 0 || height <= 0 || width > RT_TGA_MAX_DIM || height > RT_TGA_MAX_DIM)
     {
         return NULL;
     }
 
+    size_t pos = 18u + (size_t)id_length;
+    if (pos > ulen)
+    {
+        return NULL;
+    }
+
+    const size_t bpp = (size_t)(pixel_size / 8);
+    const size_t uw = (size_t)width;
+    const size_t uh = (size_t)height;
+    if (uh > SIZE_MAX / uw)
+    {
+        return NULL;
+    }
+    const size_t numPixels = uw * uh;
+    if (numPixels > SIZE_MAX / 4u)
+    {
+        return NULL;
+    }
+
+    // Reject truncated files before allocating the output buffer.
+    if (image_type == 2)
+    {
+        if (numPixels > (ulen - pos) / bpp)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        // Each RLE packet consumes at least 1 + bpp bytes and encodes at most 128 pixels.
+        const size_t minPackets = (numPixels + 127u) / 128u;
+        if (minPackets > (ulen - pos) / (1u + bpp))
+        {
+            return NULL;
+        }
+    }
+
     const qboolean upside_down = !(attributes & 0x20);
-    const int numPixels = width * height;
-    byte *out = (byte *)Mem_Alloc(numPixels * 4);
+    const size_t   rowStride = uw * 4u;
+    byte          *out = (byte *)Mem_Alloc(numPixels * 4u);
     if (!out)
     {
         return NULL;
     }
 
-    int pos = 18 + id_length;
-    const int bpp = pixel_size / 8;
-
     for (int row = height - 1; row >= 0; row--)
     {
-        const int realrow = upside_down ? row : height - 1 - row;
-        byte *pixbuf = out + realrow * width * 4;
+        const size_t realrow = (size_t)(upside_down ? row : (height - 1 - row));
+        byte        *pixbuf = out + realrow * rowStride;
 
         for (int column = 0; column < width; column++)
         {
             if (image_type == 10)
             {
-                if (pos >= len)
+                if (pos >= ulen)
                 {
                     Mem_Free(out);
                     return NULL;
                 }
                 const byte packet = buf[pos++];
-                const int count = (packet & 0x7f) + 1;
+                const int  count = (int)(packet & 0x7f) + 1;
                 if (packet & 0x80)
                 {
-                    if (pos + bpp > len || column + count > width)
+                    if (bpp > ulen - pos || count > width - column)
                     {
                         Mem_Free(out);
                         return NULL;
@@ -144,7 +183,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                     const byte r = buf[pos + 2];
                     const byte g = buf[pos + 1];
                     const byte b = buf[pos + 0];
-                    const byte a = (bpp == 4) ? buf[pos + 3] : 255;
+                    const byte a = (bpp == 4u) ? buf[pos + 3] : 255;
                     pos += bpp;
                     for (int k = 0; k < count; k++)
                     {
@@ -154,17 +193,17 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                 }
                 else
                 {
+                    if (count > width - column || (size_t)count > (ulen - pos) / bpp)
+                    {
+                        Mem_Free(out);
+                        return NULL;
+                    }
                     for (int k = 0; k < count; k++)
                     {
-                        if (pos + bpp > len || column + k >= width)
-                        {
-                            Mem_Free(out);
-                            return NULL;
-                        }
                         *pixbuf++ = buf[pos + 2];
                         *pixbuf++ = buf[pos + 1];
                         *pixbuf++ = buf[pos + 0];
-                        *pixbuf++ = (bpp == 4) ? buf[pos + 3] : 255;
+                        *pixbuf++ = (bpp == 4u) ? buf[pos + 3] : 255;
                         pos += bpp;
                     }
                     column += count - 1;
@@ -172,7 +211,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
             }
             else
             {
-                if (pos + bpp > len)
+                if (bpp > ulen - pos)
                 {
                     Mem_Free(out);
                     return NULL;
@@ -180,7 +219,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                 *pixbuf++ = buf[pos + 2];
                 *pixbuf++ = buf[pos + 1];
                 *pixbuf++ = buf[pos + 0];
-                *pixbuf++ = (bpp == 4) ? buf[pos + 3] : 255;
+                *pixbuf++ = (bpp == 4u) ? buf[pos + 3] : 255;
                 pos += bpp;
             }
         }
@@ -268,8 +307,8 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         return decoded;
     }
 
-    static const char *exts[] = { "tga", "jpg", "png" };
-    for (int e = 0; e < 3; e++)
+    static const char *exts[] = { "tga", "jpg", "jpeg", "png" };
+    for (int e = 0; e < (int)(sizeof(exts) / sizeof(exts[0])); e++)
     {
         char name[MAX_QPATH];
         q_snprintf(name, sizeof(name), "%s.%s", base, exts[e]);
@@ -470,7 +509,16 @@ const char *RT_MAT_EmissiveBlendName(int blend)
 // A blend mode by number or by any of its aliases; -2 when it is neither.
 static int rt_mat_parse_emissive_blend(const char *value)
 {
-    int v;
+    char *end = NULL;
+    long  v;
+
+    if (!value)
+        return -2;
+
+    while (*value == ' ' || *value == '\t')
+        value++;
+    if (!*value)
+        return -2;
 
     if (!q_strcasecmp(value, "cvar"))                                      return -1;
     if (!q_strcasecmp(value, "off") || !q_strcasecmp(value, "none"))       return 0;
@@ -480,16 +528,25 @@ static int rt_mat_parse_emissive_blend(const char *value)
     if (!q_strcasecmp(value, "overlay"))                                   return 3;
     if (!q_strcasecmp(value, "hard light") || !q_strcasecmp(value, "hard_light") ||
         !q_strcasecmp(value, "hardlight"))                                 return 4;
-    if (!q_strcasecmp(value, "color dodge") || !q_strcasecmp(value, "color dodge") ||
-        !q_strcasecmp(value, "color_dodge") || !q_strcasecmp(value, "color_dodge") ||
+    if (!q_strcasecmp(value, "color dodge") || !q_strcasecmp(value, "color_dodge") ||
+        !q_strcasecmp(value, "colordodge") ||
         !q_strcasecmp(value, "dodge") || !q_strcasecmp(value, "divide"))   return 5;
 
-    v = atoi(value);
-    if (v < -1 || v > RT_MAT_EMIS_BLEND_MAX)
+    errno = 0;
+    v = strtol(value, &end, 10);
+    if (errno != 0 || end == value)
     {
         return -2;
     }
-    return v;
+    while (*end == ' ' || *end == '\t')
+    {
+        end++;
+    }
+    if (*end != '\0' || v < -1 || v > RT_MAT_EMIS_BLEND_MAX)
+    {
+        return -2;
+    }
+    return (int)v;
 }
 
 static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char *value)
@@ -1458,6 +1515,65 @@ void RT_MAT_Shutdown(void)
     RT_PKZ_Shutdown();
 }
 
+static void rt_mat_apply_gamedir_overrides(const char *path)
+{
+    rt_material_t *tmp;
+    int            loaded;
+    int            n, i;
+
+    if (Sys_FileTime(path) == -1)
+    {
+        return;
+    }
+
+    tmp = (rt_material_t *)Mem_Alloc((size_t)RT_MAT_MAX_GLOBAL * sizeof(*tmp));
+    loaded = rt_mat_load_abs_file(path, tmp, RT_MAT_MAX_GLOBAL);
+    if (loaded <= 0)
+    {
+        Mem_Free(tmp);
+        return;
+    }
+
+    // Refresh rt_global_materials with the latest saved com_gamedir overrides
+    // across map changes, and patch matching names already present in
+    // rt_map_materials so user overrides win over materials/<map>.yaml without
+    // duplicating unrelated global materials into rt_map_materials.
+    for (n = 0; n < loaded; n++)
+    {
+        const rt_material_t *m = &tmp[n];
+        int                  old = -1;
+
+        for (i = 0; i < rt_global_count; i++)
+        {
+            if (!q_strcasecmp(rt_global_materials[i].name, m->name))
+            {
+                old = i;
+                break;
+            }
+        }
+        if (old >= 0)
+        {
+            rt_global_materials[old] = *m;
+        }
+        else if (rt_global_count < RT_MAT_MAX_GLOBAL)
+        {
+            rt_global_materials[rt_global_count++] = *m;
+        }
+
+        for (i = 0; i < rt_map_count; i++)
+        {
+            if (!q_strcasecmp(rt_map_materials[i].name, m->name))
+            {
+                rt_map_materials[i] = *m;
+                break;
+            }
+        }
+    }
+
+    Con_Printf("RT: loaded %d materials from %s\n", loaded, path);
+    Mem_Free(tmp);
+}
+
 void RT_MAT_ChangeMap(const char *mapname)
 {
     rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
@@ -1522,15 +1638,9 @@ void RT_MAT_ChangeMap(const char *mapname)
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);
-        if (Sys_FileTime(own) != -1)
-        {
-            rt_mat_load_cb(own, &ctx);
-        }
+        rt_mat_apply_gamedir_overrides(own);
         q_snprintf(own, sizeof(own), "%s/qray.materials.yaml", com_gamedir);
-        if (Sys_FileTime(own) != -1)
-        {
-            rt_mat_load_cb(own, &ctx);
-        }
+        rt_mat_apply_gamedir_overrides(own);
     }
 }
 

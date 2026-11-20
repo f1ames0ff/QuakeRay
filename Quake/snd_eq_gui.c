@@ -21,6 +21,7 @@
 
 #include "quakedef.h"
 #include "snd_eq.h"
+#include "qr_editor.h"
 #include "qr_gui.h"
 
 typedef struct
@@ -61,21 +62,26 @@ static void SNDEQ_SetDialogOpen (qboolean open)
 		eq_previous_dest = key_dest;
 		key_dest = key_menu;
 		Key_ClearStates ();
+		QR_GUI_ClearInputState ();
 		IN_FreeCursorForGui ();
 		SDL_ShowCursor (SDL_DISABLE);
 		QR_GUI_SetMouseCursor (1);
 	}
 	else
 	{
-		key_dest = eq_previous_dest;
-		Key_ClearStates ();
-		SDL_ShowCursor (SDL_ENABLE);
-		QR_GUI_SetMouseCursor (0);
 		eq_drag_band = -1;
-		if (key_dest == key_game)
-			IN_Activate ();
-		else
-			IN_DeactivateForMenu ();
+		QR_GUI_ClearInputState ();
+		if (!QR_Editor_Active ())
+		{
+			key_dest = eq_previous_dest;
+			Key_ClearStates ();
+			SDL_ShowCursor (SDL_ENABLE);
+			QR_GUI_SetMouseCursor (0);
+			if (key_dest == key_game)
+				IN_Activate ();
+			else
+				IN_DeactivateForMenu ();
+		}
 	}
 }
 
@@ -86,6 +92,11 @@ qboolean SNDEQ_DialogActive (void)
 
 void SNDEQ_OpenDialog (void)
 {
+	if (QR_Editor_Active ())
+	{
+		Con_Printf ("Close the editor before opening the equalizer.\n");
+		return;
+	}
 	SNDEQ_SetDialogOpen (true);
 }
 
@@ -442,6 +453,13 @@ qboolean SNDEQ_GuiProcessEvent (const void *sdl_event)
 
 	if (!eq_dialog_open || !QR_GUI_Ready ())
 		return false;
+
+	if (e->type == SDL_WINDOWEVENT)
+	{
+		QR_GUI_ProcessEvent (e);
+		return false;
+	}
+
 	if (key_dest == key_console || key_dest == key_message)
 		return false;
 

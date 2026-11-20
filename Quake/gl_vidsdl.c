@@ -33,6 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
+#include "snd_eq.h"
 #include "photocam.h"
 #include "observer.h"
 #include "../shared/rt_frame_policy.h"
@@ -4904,6 +4905,23 @@ void VID_Init (void)
 	vid_locked = true;
 }
 
+static void VID_UpdateMouseGrab (void)
+{
+	if (SNDEQ_DialogActive () || (QR_Editor_PanelOpen () && key_dest == key_game))
+	{
+		IN_FreeCursorForGui ();
+		SDL_ShowCursor (SDL_DISABLE);
+		QR_GUI_SetMouseCursor (1);
+	}
+	else if (key_dest == key_console || key_dest == key_menu)
+	{
+		if (modestate == MS_WINDOWED)
+			IN_Deactivate (true);
+		else if (modestate == MS_FULLSCREEN)
+			IN_Activate ();
+	}
+}
+
 /*
 ===================
 VID_Restart
@@ -4961,13 +4979,7 @@ static void VID_Restart (qboolean set_mode)
 	//
 	// update mouse grab
 	//
-	if (key_dest == key_console || key_dest == key_menu)
-	{
-		if (modestate == MS_WINDOWED)
-			IN_Deactivate (true);
-		else if (modestate == MS_FULLSCREEN)
-			IN_Activate ();
-	}
+	VID_UpdateMouseGrab ();
 
 	SCR_UpdateRelativeScale ();
 
@@ -5014,13 +5026,7 @@ void VID_Toggle (void)
 		Cursor_Init ();
 
 		// update mouse grab
-		if (key_dest == key_console || key_dest == key_menu)
-		{
-			if (modestate == MS_WINDOWED)
-				IN_Deactivate (true);
-			else if (modestate == MS_FULLSCREEN)
-				IN_Activate ();
-		}
+		VID_UpdateMouseGrab ();
 	}
 }
 
