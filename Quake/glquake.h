@@ -322,6 +322,7 @@ extern task_handle_t prev_end_rendering_task;
 extern task_handle_t prev_acquire_rendering_task;
 
 // johnfitz -- fog functions called from outside gl_fog.c
+void  Fog_Update (float density, float red, float green, float blue, float time);
 void  Fog_ParseServerMessage (void);
 void  Fog_FogCommand_f (void);
 void  Fog_GetColor (float *c);

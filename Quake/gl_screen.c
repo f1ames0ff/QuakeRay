@@ -73,6 +73,7 @@ extern cvar_t crosshair;
 extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
 extern cvar_t rt_dtal_debug;
+extern void   RT_ApplyPendingSunEditor (void);
 
 qboolean scr_initialized; // ready to draw
 static unsigned int scr_gui_frame_serial;
@@ -1210,11 +1211,13 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
 		task_handle_t acquire_rendering_task = Task_AllocateAndAssignFunc (GL_AcquireRenderingTask, NULL, 0);
 		Task_AddDependency (begin_rendering_task, acquire_rendering_task);
-		// the equalizer and editor's queued host actions land and dirty
-		// materials are re-synthesized on the main thread before marking reads
-		// the static-submit flag (R_MarkSurfaces) and before the frame's tasks
-		// read host state; SDL2 ImGui platform work also runs here before submit
+		// the equalizer, sun editor, and editor's queued host actions land and
+		// dirty materials are re-synthesized on the main thread before marking
+		// reads the static-submit flag (R_MarkSurfaces) and before the frame's
+		// tasks read host state; SDL2 ImGui platform work also runs here before
+		// submit
 		SNDEQ_DrainActions ();
+		RT_ApplyPendingSunEditor ();
 		QR_Editor_FlushDirty ();
 		scr_gui_frame_serial++;
 		QR_GUI_PrepareMainThreadFrame ((float) host_frametime);

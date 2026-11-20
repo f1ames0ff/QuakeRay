@@ -4386,10 +4386,10 @@ more pieces than that can lower the count.
 =================
 */
 static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int numpieces, const rt_emissive_params_t *params,
-                                         gltexture_t *tex, uint64_t base_uniqueid, const QrVertex *pose1,
-                                         const QrVertex *pose2, float blend, const QrTransform *transform,
-                                         const vec3_t offset, float min_area, int max_lights, int budget,
-                                         float model_size, float proxy_floor)
+                                         const vec3_t proxy_base_color, gltexture_t *tex, uint64_t base_uniqueid,
+                                         const QrVertex *pose1, const QrVertex *pose2, float blend,
+                                         const QrTransform *transform, const vec3_t offset, float min_area,
+                                         int max_lights, int budget, float model_size, float proxy_floor)
 {
 	int    uploaded = 0;
 	float  proxy_area = 0.0f;
@@ -4537,7 +4537,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		VectorScale (proxy_center, 1.0f / proxy_area, proxy_center);
 
 		if (RT_EmitEmissiveProxyLight (base_uniqueid, tex ? tex->name : NULL, proxy_center, proxy_normal,
-		                              vec3_origin, proxy_area, params->color, params, model_size, false))
+		                              vec3_origin, proxy_area, proxy_base_color, params, model_size, false))
 		{
 			Atomic_AddUInt32 (&rt_emis_stats.proxy_model, 1);
 		}
@@ -4674,7 +4674,10 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 
 	rt_emitter_light_t    emitter;
 	rt_emitter_resolved_t resolved;
+	vec3_t                base_color;
 	vec3_t                light_offset;
+
+	VectorCopy (params.color, base_color);
 
 	memset (&emitter, 0, sizeof (emitter));
 	emitter.name = tex->name;
@@ -4682,7 +4685,7 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 	emitter.kind = RT_LIGHT_KIND_MATERIAL;
 	emitter.intensity = 1.0f;
 	emitter.style = -1;
-	VectorCopy (params.color, emitter.color);
+	VectorCopy (base_color, emitter.color);
 
 	RT_LIGHT_ResolveEmitter (&emitter, &resolved);
 
@@ -4813,8 +4816,8 @@ int RT_AddAliasEmissiveLights (qmodel_t *model, gltexture_t *tex, uint64_t base_
 		RT_CollectAliasEmissivePieces (local, &numpieces, pose1, pose2, blend, transform, min_area, numverts, indices, numindices, &params);
 	}
 
-	return RT_UploadAliasEmissivePieces (local, numpieces, &params, tex, base_uniqueid, pose1, pose2, blend, transform,
-	                                     light_offset, min_area, max_lights, budget, model_size, proxy_floor);
+	return RT_UploadAliasEmissivePieces (local, numpieces, &params, base_color, tex, base_uniqueid, pose1, pose2, blend,
+	                                     transform, light_offset, min_area, max_lights, budget, model_size, proxy_floor);
 }
 
 static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)

@@ -12,13 +12,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
+#include <vector>
 
 namespace
 {
 
+struct CapturedUpload
+{
+    QrMaterial material;
+    QrViewport viewport;
+    QrRect2D   scissor;
+    uint32_t   indexCount;
+};
+
 const ImDrawList *expectedDrawList = nullptr;
 bool allowUncheckedUploads = false;
+bool captureUploads = false;
+std::vector<CapturedUpload> capturedUploads;
 size_t nextCommand = 0;
 unsigned uploadedIndices = 0;
 unsigned offsetCommands = 0;
@@ -508,6 +520,379 @@ void TestColorHexMixedAndVec3Input(SDL_Window *window)
             "widget regression test must keep font atlas lifetime balanced");
 }
 
+void TestScissorAndDrawCircleGuards(SDL_Window *window)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+
+    QR_GUI_Init(window, fakeInstance, nullptr, 0);
+    Require(QR_GUI_Ready() != 0, "GUI bridge must initialize for L12 scissor / DrawCircle test");
+
+    allowUncheckedUploads = true;
+    captureUploads = true;
+    capturedUploads.clear();
+
+    // Sub-rect viewport exercising Vulkan Y-flip: area_x0 = 100, area_y0 = 1000 - (50 + 600) = 350.
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    Require(QR_GUI_BeginFrame(1, 1.0f / 60.0f, 100, 50, 800, 600, 1000) != 0,
+            "scissor test frame 1 must begin");
+
+    ImDrawList *fg = ImGui::GetForegroundDrawList();
+    // 1. Valid fractional clip rect -> scissor {110, 370, 101, 101}
+    fg->PushClipRect(ImVec2(10.25f, 20.75f), ImVec2(110.25f, 120.75f));
+    fg->PushTextureID(static_cast<ImTextureID>(2));
+    fg->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(200.0f, 200.0f), IM_COL32(255, 255, 255, 255));
+    fg->PopTextureID();
+    fg->PopClipRect();
+
+    // 2. Fractional empty width (30.5..30.5) -> must be skipped, not leaked as a 1px strip
+    fg->PushClipRect(ImVec2(30.5f, 40.5f), ImVec2(30.5f, 90.0f));
+    fg->PushTextureID(static_cast<ImTextureID>(3));
+    fg->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(200.0f, 200.0f), IM_COL32(255, 0, 0, 255));
+    fg->PopTextureID();
+    fg->PopClipRect();
+
+    // 3. Fractional empty height (60.5..60.5) -> must be skipped
+    fg->PushClipRect(ImVec2(10.0f, 60.5f), ImVec2(80.0f, 60.5f));
+    fg->PushTextureID(static_cast<ImTextureID>(4));
+    fg->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(200.0f, 200.0f), IM_COL32(0, 255, 0, 255));
+    fg->PopTextureID();
+    fg->PopClipRect();
+
+    // 4. Explicitly inverted fractional clip rect (50.6..50.4) -> must be skipped
+    fg->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(100.0f, 100.0f));
+    fg->PushTextureID(static_cast<ImTextureID>(5));
+    fg->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(100.0f, 100.0f), IM_COL32(0, 0, 255, 255));
+    fg->CmdBuffer.back().ClipRect = ImVec4(50.6f, 40.5f, 50.4f, 90.0f);
+    fg->PopTextureID();
+    fg->PopClipRect();
+
+    // Non-finite and non-positive QR_GUI_DrawCircle inputs must emit zero geometry.
+    const float nanVal = std::numeric_limits<float>::quiet_NaN();
+    const float infVal = std::numeric_limits<float>::infinity();
+    ImDrawList *bg = ImGui::GetBackgroundDrawList();
+    QR_GUI_DrawCircle(nanVal, 100.0f, 10.0f, 0xFFFFFFFFu, 2.0f);
+    QR_GUI_DrawCircle(100.0f, nanVal, 10.0f, 0xFFFFFFFFu, 2.0f);
+    QR_GUI_DrawCircle(100.0f, 100.0f, nanVal, 0xFFFFFFFFu, 2.0f);
+    QR_GUI_DrawCircle(100.0f, 100.0f, infVal, 0xFFFFFFFFu, 2.0f);
+    QR_GUI_DrawCircle(100.0f, 100.0f, 0.0f, 0xFFFFFFFFu, 2.0f);
+    QR_GUI_DrawCircle(100.0f, 100.0f, -5.0f, 0xFFFFFFFFu, 2.0f);
+    Require(bg->VtxBuffer.Size == 0, "QR_GUI_DrawCircle must ignore NaN, Inf, and non-positive radii");
+
+    QR_GUI_DrawCircle(200.0f, 150.0f, 20.0f, 0xFFFFFFFFu, 2.0f);
+    Require(bg->VtxBuffer.Size > 0, "valid QR_GUI_DrawCircle must emit geometry");
+
+    QR_GUI_EndFrame();
+
+    bool foundValidFg = false;
+    for (const CapturedUpload &up : capturedUploads)
+    {
+        Require(up.material != 3 && up.material != 4 && up.material != 5,
+                "empty and inverted fractional clip rects must not upload any scissor command");
+        if (up.material == 2)
+        {
+            foundValidFg = true;
+            Require(up.viewport.x == 100.0f && up.viewport.y == 350.0f &&
+                    up.viewport.width == 800.0f && up.viewport.height == 600.0f,
+                    "Vulkan viewport Y-flip coordinates must match drawable height");
+            Require(up.scissor.x == 110 && up.scissor.y == 370 &&
+                    up.scissor.width == 101 && up.scissor.height == 101,
+                    "fractional scissor coordinates must match floor/ceil bounds in flipped drawable space");
+        }
+    }
+    Require(foundValidFg, "valid fractional clip rect must upload its draw command");
+
+    // Negative drawable origin (area_x0 = -20, area_y0 = -200) must clamp scissor x/y >= 0.
+    capturedUploads.clear();
+    QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+    Require(QR_GUI_BeginFrame(2, 1.0f / 60.0f, -20, 900, 400, 300, 1000) != 0,
+            "negative origin scissor test frame must begin");
+    fg = ImGui::GetForegroundDrawList();
+    fg->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(400.0f, 300.0f));
+    fg->PushTextureID(static_cast<ImTextureID>(2));
+    fg->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(400.0f, 300.0f), IM_COL32(255, 255, 255, 255));
+    fg->PopTextureID();
+    fg->PopClipRect();
+    QR_GUI_EndFrame();
+
+    Require(capturedUploads.size() == 1, "clamped negative-origin frame must emit one command");
+    Require(capturedUploads[0].scissor.x == 0 && capturedUploads[0].scissor.y == 0 &&
+            capturedUploads[0].scissor.width == 380 && capturedUploads[0].scissor.height == 100,
+            "scissor offset must clamp to >= 0 when viewport area starts negative");
+
+    captureUploads = false;
+    capturedUploads.clear();
+    allowUncheckedUploads = false;
+    QR_GUI_Shutdown();
+    Require(materialCreates == beforeCreates + 1 && materialDestroys == beforeDestroys + 1,
+            "scissor / DrawCircle test must keep font atlas lifetime balanced");
+}
+
+void TestOverlayReinitLifecycle(SDL_Window *window)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+    const float samples[4] = { 1.0f, 2.5f, 4.0f, 3.0f };
+
+    allowUncheckedUploads = true;
+    captureUploads = true;
+
+    for (int cycle = 0; cycle < 2; ++cycle)
+    {
+        QR_GUI_Init(window, fakeInstance, nullptr, 0);
+        Require(QR_GUI_Ready() != 0, "GUI bridge must initialize on overlay lifecycle cycle");
+
+        // QR_GUI_OverlayBegin uses ImGuiWindowFlags_AlwaysAutoResize, so ImGui
+        // measures auto-fit bounds on frame 1 and emits draw commands on frame 2.
+        for (unsigned frame = 1; frame <= 2; ++frame)
+        {
+            capturedUploads.clear();
+            QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+            Require(QR_GUI_BeginFrame(frame, 1.0f / 60.0f, 0, 0, 1920, 1080, 1080) != 0,
+                    "overlay frame must begin");
+            QR_GUI_OverlayBegin("##rt_stats_test", 12.0f, 12.0f, 0.7f, "Stats", 2);
+            QR_GUI_OverlaySection("CPU");
+            QR_GUI_OverlayRow("Frame", "4.0 ms", samples, 4, 0xFF80FF80u);
+            QR_GUI_OverlayBudgetRow("Draw", "2.5 ms", samples, 4, 8.0f, 16.0f);
+            QR_GUI_OverlayNote("reinit ok");
+            QR_GUI_OverlayEnd();
+            QR_GUI_EndFrame();
+        }
+
+        Require(!capturedUploads.empty(), "overlay draw must upload geometry on every init cycle");
+        QR_GUI_Shutdown();
+        Require(QR_GUI_Ready() == 0, "QR_GUI_Shutdown must clear ready flag between overlay cycles");
+    }
+
+    captureUploads = false;
+    capturedUploads.clear();
+    allowUncheckedUploads = false;
+    Require(materialCreates == beforeCreates + 2 && materialDestroys == beforeDestroys + 2,
+            "Shutdown -> Init -> Overlay lifecycle must balance font atlas materials across cycles");
+}
+
+void TestImagePickAndPolygonEdit(SDL_Window *window)
+{
+    void *const fakeInstance = reinterpret_cast<void *>(uintptr_t(1));
+    const unsigned beforeCreates = materialCreates;
+    const unsigned beforeDestroys = materialDestroys;
+    const Uint32 windowId = SDL_GetWindowID(window);
+
+    QR_GUI_Init(window, fakeInstance, nullptr, 0);
+    Require(QR_GUI_Ready() != 0, "GUI bridge must initialize for ImagePick / PolygonEdit tests");
+    allowUncheckedUploads = true;
+
+    auto sendMove = [&](int x, int y) {
+        SDL_Event ev = {};
+        ev.type = SDL_MOUSEMOTION;
+        ev.motion.windowID = windowId;
+        ev.motion.x = x;
+        ev.motion.y = y;
+        QR_GUI_ProcessEvent(&ev);
+    };
+    auto sendButton = [&](bool down, int x, int y) {
+        SDL_Event ev = {};
+        ev.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+        ev.button.windowID = windowId;
+        ev.button.button = SDL_BUTTON_LEFT;
+        ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
+        ev.button.x = x;
+        ev.button.y = y;
+        QR_GUI_ProcessEvent(&ev);
+    };
+    auto sendModKey = [&](SDL_Keycode sym, SDL_Scancode scancode, Uint16 mod, bool down) {
+        SDL_Event ev = {};
+        ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+        ev.key.windowID = windowId;
+        ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+        ev.key.keysym.sym = sym;
+        ev.key.keysym.scancode = scancode;
+        ev.key.keysym.mod = down ? mod : 0;
+        QR_GUI_ProcessEvent(&ev);
+    };
+    auto sendWheel = [&](int y) {
+        SDL_Event ev = {};
+        ev.type = SDL_MOUSEWHEEL;
+        ev.wheel.windowID = windowId;
+        ev.wheel.y = y;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+        ev.wheel.preciseY = static_cast<float>(y);
+#endif
+        QR_GUI_ProcessEvent(&ev);
+    };
+
+    unsigned frame = 1;
+    auto runPanel = [&](auto &&drawFn, bool drawBlocker, ImVec2 blockerPos, ImVec2 blockerSize) {
+        QR_GUI_PrepareMainThreadFrame(1.0f / 60.0f);
+        Require(QR_GUI_BeginFrame(frame++, 1.0f / 60.0f, 0, 0, 1280, 720, 720) != 0,
+                "ImagePick/PolygonEdit frame must begin");
+        QR_GUI_BeginPanel("preview_test", 100, 100, 500, 560);
+        drawFn();
+        QR_GUI_EndPanel();
+        if (drawBlocker)
+        {
+            ImGui::SetNextWindowPos(blockerPos);
+            ImGui::SetNextWindowSize(blockerSize);
+            ImGui::Begin("popup_blocker", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::End();
+        }
+        QR_GUI_EndFrame();
+    };
+
+    // --- L11a: QR_GUI_ImagePick ActiveID, external drag rejection, and popup blocking zoom ---
+    float u = -1.0f, v = -1.0f;
+    int picked = 0;
+    ImVec2 imgMin(0.0f, 0.0f), imgMax(0.0f, 0.0f);
+    runPanel([&] {
+        picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v);
+        imgMin = ImGui::GetItemRectMin();
+        imgMax = ImGui::GetItemRectMax();
+    }, false, ImVec2(0, 0), ImVec2(0, 0));
+
+    const float imgW = imgMax.x - imgMin.x;
+    const float imgH = imgMax.y - imgMin.y;
+    Require(imgW > 100.0f && imgH > 100.0f, "ImagePick must occupy expected panel width");
+    const int cx = static_cast<int>(std::lround(imgMin.x + imgW * 0.5f));
+    const int cy = static_cast<int>(std::lround(imgMin.y + imgH * 0.5f));
+    const int q25x = static_cast<int>(std::lround(imgMin.x + imgW * 0.25f));
+    const int q25y = static_cast<int>(std::lround(imgMin.y + imgH * 0.25f));
+    const int q75x = static_cast<int>(std::lround(imgMin.x + imgW * 0.75f));
+
+    // Drag originating outside preview into preview must NOT pick.
+    sendMove(10, 10);
+    sendButton(true, 10, 10);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 0, "LMB pressed outside ImagePick must not pick");
+    sendMove(cx, cy);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 0, "dragging into ImagePick from outside must not overwrite color");
+    QR_GUI_ClearInputState();
+
+    // Clicking and dragging inside ImagePick must acquire ActiveID and update UV.
+    sendMove(cx, cy);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 0 && QR_GUI_AnyItemActive() == 0, "hovering ImagePick must not activate it");
+    sendButton(true, cx, cy);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 1 && QR_GUI_AnyItemActive() == 1,
+            "clicking inside ImagePick must return 1 and acquire ImGui ActiveID");
+    Require(std::fabs(u - 0.5f) < 0.02f && std::fabs(v - 0.5f) < 0.02f,
+            "center click must sample UV near (0.5, 0.5)");
+    sendMove(q75x, q25y);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 1 && QR_GUI_AnyItemActive() == 1,
+            "dragging inside ImagePick must maintain ActiveID");
+    Require(std::fabs(u - 0.75f) < 0.02f && std::fabs(v - 0.25f) < 0.02f,
+            "drag must track updated UV coordinates");
+    QR_GUI_ClearInputState();
+
+    // Overlying window/popup over ImagePick must block Ctrl+wheel zoom.
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             true, imgMin, ImVec2(imgW, imgH));
+    sendMove(cx, cy);
+    sendModKey(SDLK_LCTRL, SDL_SCANCODE_LCTRL, KMOD_LCTRL, true);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             true, imgMin, ImVec2(imgW, imgH));
+    sendWheel(3);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             true, imgMin, ImVec2(imgW, imgH));
+    QR_GUI_ClearInputState();
+    // Let ImGui retire the closed popup_blocker window before sampling unblocked clicks.
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+
+    // Verify zoom stayed 1.0f after blocked Ctrl+wheel by sampling the 25% screen position.
+    sendMove(q25x, q25y);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    sendButton(true, q25x, q25y);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 1 && std::fabs(u - 0.25f) < 0.02f && std::fabs(v - 0.25f) < 0.02f,
+            "Ctrl+wheel over an overlying popup must not zoom ImagePick");
+    QR_GUI_ClearInputState();
+
+    // Verify unblocked Ctrl+wheel DOES zoom toward center.
+    sendMove(cx, cy);
+    sendModKey(SDLK_LCTRL, SDL_SCANCODE_LCTRL, KMOD_LCTRL, true);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    sendWheel(3);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    QR_GUI_ClearInputState();
+
+    sendMove(q25x, q25y);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    sendButton(true, q25x, q25y);
+    runPanel([&] { picked = QR_GUI_ImagePick("##img_test", 2, 256, 256, &u, &v); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    Require(picked == 1 && u > 0.35f && u < 0.49f,
+            "unblocked Ctrl+wheel over ImagePick must zoom around cursor");
+    QR_GUI_ClearInputState();
+
+    // --- L11b: QR_GUI_PolygonEdit aspect-corrected Shift+drag edge normal on 4:1 texture ---
+    // Edge 0: (0.30, 0.20) -> (0.45, 0.80); on 256x64 (w = 4*h), pixel edge is (0.6*h, 0.6*h) (exact 45 deg).
+    float polyUv[3][2] = { { 0.30f, 0.20f }, { 0.45f, 0.80f }, { 0.85f, 0.50f } };
+    int polyCount = 3;
+    int polyChanged = 0;
+    ImVec2 pMin(0.0f, 0.0f), pMax(0.0f, 0.0f);
+    runPanel([&] {
+        polyChanged = QR_GUI_PolygonEdit("##poly_test", 2, 256, 64, polyUv, &polyCount, 16);
+        pMin = ImGui::GetItemRectMin();
+        pMax = ImGui::GetItemRectMax();
+    }, false, ImVec2(0, 0), ImVec2(0, 0));
+
+    const float pw = pMax.x - pMin.x;
+    const float ph = pMax.y - pMin.y;
+    Require(pw > 200.0f && std::fabs(pw / ph - 4.0f) < 0.05f,
+            "PolygonEdit preview must preserve 4:1 texture aspect ratio");
+
+    const int midX = static_cast<int>(std::lround(pMin.x + 0.375f * pw));
+    const int midY = static_cast<int>(std::lround(pMin.y + 0.50f * ph));
+
+    // Hover edge 0 midpoint with Shift held, press LMB to begin normal-constrained drag, then move (-10, +10) px.
+    sendMove(midX, midY);
+    sendModKey(SDLK_LSHIFT, SDL_SCANCODE_LSHIFT, KMOD_LSHIFT, true);
+    runPanel([&] { polyChanged = QR_GUI_PolygonEdit("##poly_test", 2, 256, 64, polyUv, &polyCount, 16); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    sendButton(true, midX, midY);
+    runPanel([&] { polyChanged = QR_GUI_PolygonEdit("##poly_test", 2, 256, 64, polyUv, &polyCount, 16); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+    sendMove(midX - 10, midY + 10);
+    runPanel([&] { polyChanged = QR_GUI_PolygonEdit("##poly_test", 2, 256, 64, polyUv, &polyCount, 16); },
+             false, ImVec2(0, 0), ImVec2(0, 0));
+
+    Require(polyChanged == 1, "Shift+drag along edge normal must update polygon edge");
+    const float dx0 = (polyUv[0][0] - 0.30f) * pw;
+    const float dy0 = (polyUv[0][1] - 0.20f) * ph;
+    const float dx1 = (polyUv[1][0] - 0.45f) * pw;
+    const float dy1 = (polyUv[1][1] - 0.80f) * ph;
+    Require(std::fabs(dx0 - (-10.0f)) < 1.0f && std::fabs(dy0 - 10.0f) < 1.0f,
+            "Shift+drag vertex 0 must move strictly along pixel-space normal (-10, +10)");
+    Require(std::fabs(dx1 - (-10.0f)) < 1.0f && std::fabs(dy1 - 10.0f) < 1.0f,
+            "Shift+drag vertex 1 must move strictly along pixel-space normal (-10, +10)");
+    const float edgePxX = 0.15f * pw;
+    const float edgePxY = 0.60f * ph;
+    Require(std::fabs(dx0 * edgePxX + dy0 * edgePxY) < 1.0f,
+            "Shift+drag displacement must be orthogonal to edge in pixel space");
+
+    QR_GUI_ClearInputState();
+    allowUncheckedUploads = false;
+    QR_GUI_Shutdown();
+    Require(materialCreates == beforeCreates + 1 && materialDestroys == beforeDestroys + 1,
+            "ImagePick / PolygonEdit test must keep font atlas lifetime balanced");
+}
+
 }
 
 QrResult QRCONV qrCreateMaterial(QrInstance, const QrMaterialCreateInfo *info, QrMaterial *material)
@@ -537,6 +922,8 @@ QrResult QRCONV qrUploadRasterizedGeometry(QrInstance, const QrRasterizedGeometr
     if (allowUncheckedUploads && expectedDrawList == nullptr)
     {
         Require(info != nullptr && viewProjection != nullptr && viewport != nullptr, "upload arguments must be valid");
+        if (captureUploads)
+            capturedUploads.push_back({ info->material, *viewport, info->scissor, info->indexCount });
         return QR_SUCCESS;
     }
     Require(expectedDrawList != nullptr, "unexpected geometry upload");
@@ -617,15 +1004,19 @@ int main()
         TestDuplicateFrameId(window);
         TestMousePosCacheAndClearInputState(window);
         TestColorHexMixedAndVec3Input(window);
+        TestScissorAndDrawCircleGuards(window);
+        TestOverlayReinitLifecycle(window);
+        TestImagePickAndPolygonEdit(window);
         TestNullContextGuards(window);
 
         SDL_DestroyWindow(window);
         SDL_Quit();
-        std::cout << "GUI bridge tests passed: 16-bit rollover, null-context guards, font fallback, main-thread SDL prep, M09-M12, and H20\n";
+        std::cout << "GUI bridge tests passed: 16-bit rollover, null-context guards, font fallback, main-thread SDL prep, M09-M12, H20, and L02/L11/L12\n";
         return 0;
     }
     catch (const std::exception &error)
     {
+        captureUploads = false;
         allowUncheckedUploads = false;
         QR_GUI_Shutdown();
         if (window != nullptr)

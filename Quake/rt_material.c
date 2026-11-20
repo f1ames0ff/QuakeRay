@@ -805,7 +805,6 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
     if (!yaml_parser_initialize(&parser))
     {
-        rt_load_file_free((byte *)filebuf);
         return 0;
     }
 

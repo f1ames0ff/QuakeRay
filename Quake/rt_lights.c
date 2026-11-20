@@ -20,7 +20,7 @@ extern cvar_t rt_cluster_dlights;
 
 static rt_light_t rt_lights[RT_LIGHT_CAP];
 static int        rt_light_count = 0;
-static char       rt_light_inherited_names[RT_LIGHT_CAP][MAX_QPATH];
+static char       rt_light_inherited_names[RT_LIGHT_CAP][RT_LIGHT_NAME_MAX];
 static int        rt_light_inherited_count = 0;
 static qboolean   rt_light_initialized = false;
 
@@ -146,7 +146,7 @@ static const char *rt_light_header =
 // instance key ("name#id") keeps its id and normalizes the name before it.
 static void rt_light_norm(const char *name, char *out, size_t outsize)
 {
-    char  buf[MAX_QPATH];
+    char  buf[RT_LIGHT_NAME_MAX];
     char *hash;
     char *dot;
 
@@ -213,7 +213,7 @@ void RT_LIGHT_SetCount(int count)
 
 rt_light_t *RT_LIGHT_Find(const char *name)
 {
-    char normalized[MAX_QPATH];
+    char normalized[RT_LIGHT_NAME_MAX];
 
     if (!rt_light_initialized || !name || !name[0])
     {
@@ -226,7 +226,7 @@ rt_light_t *RT_LIGHT_Find(const char *name)
 rt_light_t *RT_LIGHT_Ensure(const char *name)
 {
     rt_light_t *light;
-    char        normalized[MAX_QPATH];
+    char        normalized[RT_LIGHT_NAME_MAX];
 
     if (!rt_light_initialized || !name || !name[0])
     {
@@ -254,7 +254,7 @@ rt_light_t *RT_LIGHT_Ensure(const char *name)
 
 void RT_LIGHT_MakeKey(const char *name, uint64_t uniqueID, char *out, size_t outsize)
 {
-    char normalized[MAX_QPATH];
+    char normalized[RT_LIGHT_NAME_MAX];
 
     rt_light_norm(name, normalized, sizeof(normalized));
     q_snprintf(out, outsize, "%s#%llu", normalized, (unsigned long long)uniqueID);
@@ -262,7 +262,7 @@ void RT_LIGHT_MakeKey(const char *name, uint64_t uniqueID, char *out, size_t out
 
 rt_light_t *RT_LIGHT_FindInstance(const char *name, uint64_t uniqueID)
 {
-    char  key[MAX_QPATH];
+    char        key[RT_LIGHT_NAME_MAX];
     rt_light_t *light;
 
     if (!rt_light_initialized || !name || !name[0])
@@ -277,7 +277,7 @@ rt_light_t *RT_LIGHT_FindInstance(const char *name, uint64_t uniqueID)
 
 rt_light_t *RT_LIGHT_EnsureInstance(const char *name, uint64_t uniqueID)
 {
-    char key[MAX_QPATH];
+    char key[RT_LIGHT_NAME_MAX];
 
     RT_LIGHT_MakeKey(name, uniqueID, key, sizeof(key));
     return RT_LIGHT_Ensure(key);
@@ -285,7 +285,7 @@ rt_light_t *RT_LIGHT_EnsureInstance(const char *name, uint64_t uniqueID)
 
 void RT_LIGHT_Remove(const char *name)
 {
-    char        normalized[MAX_QPATH];
+    char        normalized[RT_LIGHT_NAME_MAX];
     rt_light_t *light;
     int         index;
 
@@ -318,7 +318,7 @@ qboolean RT_LIGHT_HasFields(const rt_light_t *l)
 
 qboolean RT_LIGHT_HasInheritedOverride(const char *name)
 {
-    char normalized[MAX_QPATH];
+    char normalized[RT_LIGHT_NAME_MAX];
     int  i;
 
     if (!rt_light_initialized || !name || !name[0])
@@ -339,7 +339,7 @@ qboolean RT_LIGHT_HasInheritedOverride(const char *name)
 
 rt_light_t *RT_LIGHT_FindEmitter(const char *name, uint64_t uniqueID)
 {
-    char        base[MAX_QPATH];
+    char        base[RT_LIGHT_NAME_MAX];
     const char *colon;
     size_t      len;
     rt_light_t *light;
@@ -732,7 +732,7 @@ static int rt_light_parse_text(const char *text, int length)
 
         if (!strncmp(p, "- name:", 7) || !strncmp(p, "name:", 5))
         {
-            char name[MAX_QPATH];
+            char name[RT_LIGHT_NAME_MAX];
 
             p = strchr(p, ':') + 1;
             q_strlcpy(name, p, sizeof(name));
@@ -1193,7 +1193,7 @@ void RT_LIGHT_Shutdown(void)
     rt_light_inherited_count = 0;
 }
 
-int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
+int RT_LIGHT_ReadNames(const char *path, char (*names)[RT_LIGHT_NAME_MAX], int max)
 {
     FILE    *f = fopen(path, "r");
     char     line[1024];
@@ -1210,7 +1210,7 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
     {
         char    *start = line;
         char    *p;
-        char     name[MAX_QPATH];
+        char     name[RT_LIGHT_NAME_MAX];
         qboolean at_col0;
         int      i, dup = 0;
 
@@ -1285,7 +1285,7 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
         }
         if (!dup)
         {
-            q_strlcpy(names[count++], name, MAX_QPATH);
+            q_strlcpy(names[count++], name, RT_LIGHT_NAME_MAX);
         }
     }
 
@@ -1293,7 +1293,7 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
     return count;
 }
 
-qboolean RT_LIGHT_Write(const char *path, char (*names)[MAX_QPATH], int count)
+qboolean RT_LIGHT_Write(const char *path, char (*names)[RT_LIGHT_NAME_MAX], int count)
 {
     FILE *f;
     int   i, written = 0;
@@ -1847,6 +1847,26 @@ void RT_SkySettings_SetScopeNoCapture(qboolean level)
 qboolean RT_SkySettings_IsLevelScope(void)
 {
     return rt_sky_level_mode;
+}
+
+const char *RT_SkySettings_ActiveBaseline(const char *cvar)
+{
+    int index;
+
+    if (!rt_sky_session_active)
+        return NULL;
+
+    index = RT_SkySettings_Index(cvar);
+    if (index < 0)
+        return NULL;
+
+    if (!rt_sky_level_mode)
+        return rt_sky_session_globals_ready ? rt_sky_session_globals[index] : NULL;
+
+    if (rt_sky_session_set[index])
+        return rt_sky_session_values[index];
+
+    return rt_sky_session_globals_ready ? rt_sky_session_globals[index] : NULL;
 }
 
 // Whether this session changed the level's "sky:" block (either editing values

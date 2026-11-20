@@ -3169,6 +3169,10 @@ void RT_GetAcidColor (float color[3])
 
 #define RAD2DEG(a) ((a) / M_PI_DIV_180)
 
+static atomic_uint32_t rt_sun_edit_pending;
+static float           rt_sun_edit_pitch;
+static float           rt_sun_edit_yaw;
+
 // The crosshair is the view vector of the frame, bob and weapon kick included,
 // and the sun goes exactly where it points. The light, the god rays and the sky
 // read rt_sky_sun_pitch/rt_sky_sun_yaw through AngleVectors and take -forward as the
@@ -3180,15 +3184,36 @@ void RT_UpdateSunEditor (void)
 	float pitch, yaw;
 
 	if (!CVAR_TO_BOOL (rt_sky_sun_edit) || !CVAR_TO_BOOL (rt_physical_sun))
-	{
 		return;
-	}
 
-	pitch = RAD2DEG (asin (CLAMP (-1.0f, vpn[2], 1.0f)));
-	yaw = anglemod (RAD2DEG (atan2 (vpn[1], vpn[0])) + 180.0f);
+	if (key_dest != key_game || (QR_Editor_Active () && !QR_Editor_Flying ()))
+		return;
 
-	Cvar_SetValueQuick (&rt_sky_sun_pitch, pitch);
-	Cvar_SetValueQuick (&rt_sky_sun_yaw, yaw);
+	pitch = (float)RAD2DEG (asin (CLAMP (-1.0f, vpn[2], 1.0f)));
+	yaw = anglemod ((float)RAD2DEG (atan2 (vpn[1], vpn[0])) + 180.0f);
+	if (yaw > 180.0f)
+		yaw -= 360.0f;
+
+	// Runs inside R_SetupViewBeforeMark on a render worker thread: publish the
+	// computed angles for main-thread cvar commit in RT_ApplyPendingSunEditor.
+	rt_sun_edit_pitch = pitch;
+	rt_sun_edit_yaw = yaw;
+	Atomic_StoreUInt32 (&rt_sun_edit_pending, 1);
+}
+
+void RT_ApplyPendingSunEditor (void)
+{
+	if (Tasks_IsWorker ())
+		return;
+
+	if (!Atomic_ExchangeUInt32 (&rt_sun_edit_pending, 0))
+		return;
+
+	if (!CVAR_TO_BOOL (rt_sky_sun_edit) || !CVAR_TO_BOOL (rt_physical_sun))
+		return;
+
+	Cvar_SetValueQuick (&rt_sky_sun_pitch, rt_sun_edit_pitch);
+	Cvar_SetValueQuick (&rt_sky_sun_yaw, rt_sun_edit_yaw);
 }
 
 void RT_GetSkyCloudsColor (float color[3])
@@ -4442,6 +4467,7 @@ static void RT_SunEditChanged_f (cvar_t *var)
 
 	if (CVAR_TO_BOOL (rt_sky_sun_edit))
 	{
+		Atomic_StoreUInt32 (&rt_sun_edit_pending, 0);
 		Con_Printf ("Sun editor: the sun follows the crosshair, press fire to leave it there.\n");
 
 		if (!CVAR_TO_BOOL (rt_physical_sky))
@@ -4455,6 +4481,11 @@ static void RT_SunEditChanged_f (cvar_t *var)
 	}
 	else
 	{
+		if (!Tasks_IsWorker () && Atomic_ExchangeUInt32 (&rt_sun_edit_pending, 0) && CVAR_TO_BOOL (rt_physical_sun))
+		{
+			Cvar_SetValueQuick (&rt_sky_sun_pitch, rt_sun_edit_pitch);
+			Cvar_SetValueQuick (&rt_sky_sun_yaw, rt_sun_edit_yaw);
+		}
 		Con_Printf ("Sun placed: rt_sky_sun_pitch %s, rt_sky_sun_yaw %s\n", rt_sky_sun_pitch.string, rt_sky_sun_yaw.string);
 	}
 
