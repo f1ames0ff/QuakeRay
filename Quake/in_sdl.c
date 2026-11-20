@@ -981,6 +981,7 @@ void IN_SendKeyEvents (void)
 			else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 			{
 				vid_has_focus = false;
+				QR_Editor_GizmoRelease ();
 				S_BlockSound ();
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
@@ -1037,11 +1038,12 @@ void IN_SendKeyEvents (void)
 				Cvar_Set ("rt_sky_sun_edit", "0");
 				break;
 			}
-			// qr light editor: in the flying mode LMB near a gizmo arrow drags
-			// the selected custom light along that axis
+			// qr light editor: an active light drag always drops on LMB before
+			// placement, gizmo press, Alt+LMB grab, or face pick can fire on the same click
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
-			    key_dest == key_game && QR_Editor_GizmoPress ())
+			    key_dest == key_game && QR_Editor_LightDragActive ())
 			{
+				QR_Editor_LightDrop ();
 				break;
 			}
 			// qr light editor: in the Custom tab's placement mode the fire button
@@ -1052,18 +1054,19 @@ void IN_SendKeyEvents (void)
 				QR_Editor_PlaceAtCrosshair ();
 				break;
 			}
+			// qr light editor: in the flying mode LMB near a gizmo arrow drags
+			// the selected custom light along that axis
+			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
+			    key_dest == key_game && QR_Editor_GizmoPress ())
+			{
+				break;
+			}
 			// qr light editor: Alt+LMB in the flying mode grabs the light under
 			// the crosshair; the next LMB drops it and Esc returns it
 			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
 			    key_dest == key_game && QR_Editor_Flying () && (SDL_GetModState () & KMOD_ALT))
 			{
 				QR_Editor_LightGrab ();
-				break;
-			}
-			if (event.button.state == SDL_PRESSED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
-			    key_dest == key_game && QR_Editor_LightDragActive ())
-			{
-				QR_Editor_LightDrop ();
 				break;
 			}
 			// qr light editor: while flying, the fire button selects the face under
@@ -1074,11 +1077,15 @@ void IN_SendKeyEvents (void)
 				QR_Editor_Pick ();
 				break;
 			}
-			if (event.button.state == SDL_RELEASED && buttonremap[event.button.button - 1] == K_MOUSE1 &&
-			    key_dest == key_game && QR_Editor_GizmoDragActive ())
+			if (event.button.state == SDL_RELEASED && buttonremap[event.button.button - 1] == K_MOUSE1)
 			{
-				QR_Editor_GizmoRelease ();
-				break;
+				if (QR_Editor_GizmoDragActive ())
+				{
+					QR_Editor_GizmoRelease ();
+					break;
+				}
+				if (key_dest != key_game)
+					QR_Editor_GizmoRelease ();
 			}
 			// camera_observer: RMB is held while the vertical mouse movement
 			// brings the camera closer or moves it away

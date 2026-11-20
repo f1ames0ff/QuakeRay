@@ -1014,6 +1014,28 @@ static void RT_SurfacePacksReset (void)
 	rt_surfacepack_size = model->numsurfaces;
 }
 
+/*
+================
+RT_InvalidateSurfacePackCache
+
+Clears the world surface-pack cache entries and bumps the generation so every
+worker's thread-local entity surface-pack cache refreshes on the next frame
+(e.g. when the material editor toggles light_styles mid-map). Must be called on
+the main thread outside the render tasks (before V_RenderView / Tasks_Submit).
+================
+*/
+void RT_InvalidateSurfacePackCache (void)
+{
+	assert (!Tasks_IsWorker ());
+
+	if (rt_surfacepack && rt_surfacepack_size > 0)
+		memset (rt_surfacepack, 0, sizeof (rt_surfacepack[0]) * (size_t) rt_surfacepack_size);
+
+	rt_surfacepack_generation++;
+	if (rt_surfacepack_generation == 0)
+		rt_surfacepack_generation = 1;
+}
+
 static uint32_t RT_SurfacePackLightStyles (
 	const rt_uploadsurf_state_t *s, const QrVertex *verts, int num_verts, const QrTransform *transform, qboolean light_styles, float reach)
 {
