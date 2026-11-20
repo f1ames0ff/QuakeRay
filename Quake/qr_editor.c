@@ -100,6 +100,7 @@
 #endif
 
 extern vec3_t     vpn, vright, vup, r_origin; // gl_rmain.c
+extern float      r_fovy;                     // gl_rmain.c
 extern qboolean   keydown[MAX_KEYS];          // keys.c
 extern kbutton_t  in_forward, in_back, in_moveleft, in_moveright, in_up, in_down, in_jump; // cl_input.c
 extern atomic_uint32_t rt_require_static_submit; // gl_rmain.c
@@ -363,7 +364,7 @@ static struct
 	int         snap_light_count;
 	rt_light_t *snap_disk_lights;
 	int         snap_disk_light_count;
-	char        light_touched[QRE_TOUCHED_MAX][MAX_QPATH];
+	char        light_touched[QRE_TOUCHED_MAX][RT_LIGHT_NAME_MAX];
 	int         light_touched_count;
 	int         applied_light_touched_count;
 
@@ -441,8 +442,8 @@ static struct
 	qboolean    light_dragging;
 	int         light_drag_kind;
 	int         light_drag_custom;
-	char        light_drag_name[MAX_QPATH];
-	char        light_drag_key[MAX_QPATH];
+	char        light_drag_name[RT_LIGHT_NAME_MAX];
+	char        light_drag_key[RT_LIGHT_NAME_MAX];
 	rt_light_t *light_drag_entry;
 	qboolean    light_drag_created;
 	qboolean    light_drag_backup_valid;
@@ -690,6 +691,8 @@ static void     QRE_CancelLightDrag (void);
 static void     QRE_UpdateLightDrag (void);
 static void     QRE_CustomGizmoCancel (void);
 static void     QRE_HostSetFogEnabled (qboolean enabled);
+static void     QRE_HostSetFog (float density, float r, float g, float b);
+static void     QRE_ClearSunPlacement (void);
 static void     QRE_ResetActions (void);
 static void     QRE_PreviewPump (void);
 static void     QRE_QueueTexture (int g, int p, const char *value);
@@ -889,6 +892,13 @@ static void QRE_TakeCustomSnapshot (qboolean take_disk)
 	}
 }
 
+#define QRE_FOG_EPS 1e-5f
+
+static qboolean QRE_FogFloatDiffers (float a, float b)
+{
+	return (fabsf (a - b) > QRE_FOG_EPS) ? true : false;
+}
+
 static void QRE_RestoreCustomSnapshot (qboolean to_disk)
 {
 	rt_custom_light_t       *lights = RT_CustomLights (NULL);
@@ -903,6 +913,18 @@ static void QRE_RestoreCustomSnapshot (qboolean to_disk)
 		memcpy (lights, src, (size_t)src_count * sizeof (rt_custom_light_t));
 	RT_CustomLights_SetCount (src_count);
 
+	// Invalidate selected custom light if the restored list is now shorter.
+	if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM)
+	{
+		if (qre.sel_light.uniqueID <= (uint64_t)UINT32_MAX ||
+		    (qre.sel_light.uniqueID - ((uint64_t)UINT32_MAX + 1)) >= (uint64_t)src_count)
+		{
+			QRE_CustomGizmoCancel ();
+			qre.sel_light_valid = false;
+			memset (&qre.sel_light, 0, sizeof (qre.sel_light));
+		}
+	}
+
 	// the live list matches the snapshot again
 	{
 		int i;
@@ -911,16 +933,15 @@ static void QRE_RestoreCustomSnapshot (qboolean to_disk)
 			qre.snap_custom_map[i] = (i < src_count) ? i : -1;
 	}
 
-	// the fog is engine state, not a cvar: it comes back through the same
-	// `fog` command the Global tab edits it with, and only when it differs
+	// the fog is engine state, not a cvar: apply directly via Fog_Update on the
+	// main thread so Restore/Cancel/Exit never suffer 2-frame Cbuf lag or %f drift
 	Fog_GetColor (color);
-	if (color[0] != fog_color[0] || color[1] != fog_color[1] ||
-	    color[2] != fog_color[2] || Fog_GetDensity () != fog_density)
+	if (QRE_FogFloatDiffers (color[0], fog_color[0]) ||
+	    QRE_FogFloatDiffers (color[1], fog_color[1]) ||
+	    QRE_FogFloatDiffers (color[2], fog_color[2]) ||
+	    QRE_FogFloatDiffers (Fog_GetDensity (), fog_density))
 	{
-		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", fog_density,
-		                  CLAMP (0.0f, fog_color[0], 1.0f),
-		                  CLAMP (0.0f, fog_color[1], 1.0f),
-		                  CLAMP (0.0f, fog_color[2], 1.0f)));
+		QRE_HostSetFog (fog_density, fog_color[0], fog_color[1], fog_color[2]);
 	}
 	if (Fog_Enabled () != fog_enabled)
 		QRE_HostSetFogEnabled (fog_enabled);
@@ -940,8 +961,10 @@ static qboolean QRE_CustomTouched (void)
 		return true;
 
 	Fog_GetColor (color);
-	if (color[0] != qre.snap_fog_color[0] || color[1] != qre.snap_fog_color[1] ||
-	    color[2] != qre.snap_fog_color[2] || Fog_GetDensity () != qre.snap_fog_density ||
+	if (QRE_FogFloatDiffers (color[0], qre.snap_fog_color[0]) ||
+	    QRE_FogFloatDiffers (color[1], qre.snap_fog_color[1]) ||
+	    QRE_FogFloatDiffers (color[2], qre.snap_fog_color[2]) ||
+	    QRE_FogFloatDiffers (Fog_GetDensity (), qre.snap_fog_density) ||
 	    Fog_Enabled () != qre.snap_fog_enabled)
 		return true;
 
@@ -984,6 +1007,7 @@ static void QRE_RestoreLightSnapshot (qboolean to_disk)
 	{
 		memcpy (list, src, (size_t)src_count * sizeof (rt_light_t));
 		RT_LIGHT_SetCount (src_count);
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 	}
 
 	QRE_RestoreCustomSnapshot (to_disk);
@@ -1022,15 +1046,27 @@ static qboolean QRE_NameInList (const char (*list)[MAX_QPATH], int count, const 
 	return false;
 }
 
+static qboolean QRE_LightNameInList (const char (*list)[RT_LIGHT_NAME_MAX], int count, const char *name)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+	{
+		if (!strcmp (list[i], name))
+			return true;
+	}
+	return false;
+}
+
 // The light names the session touched: what the session file writes besides the
 // entries the target already carried.
 static void QRE_TouchLight (const char *name)
 {
 	if (!name || !name[0])
 		return;
-	if (!QRE_NameInList (qre.light_touched, qre.light_touched_count, name) &&
+	if (!QRE_LightNameInList (qre.light_touched, qre.light_touched_count, name) &&
 	    qre.light_touched_count < QRE_TOUCHED_MAX)
-		q_strlcpy (qre.light_touched[qre.light_touched_count++], name, MAX_QPATH);
+		q_strlcpy (qre.light_touched[qre.light_touched_count++], name, RT_LIGHT_NAME_MAX);
 }
 
 static void QRE_MarkDirtyInternal (rt_material_t *m, qboolean full, qboolean light)
@@ -1758,6 +1794,9 @@ static struct
 	qboolean          cursor_reclaim; // the panel came back from the console: grab the cursor again
 	int               pause_world; // -1 none, 0 running, 1 paused
 	int               fog_enabled; // -1 none, 0 off, 1 on (CVAR_ROM via Cvar_SetROM)
+	qboolean          fog_pending;
+	float             fog_density;
+	float             fog_color[3];
 	int               sky_scope;   // -1 none, 0 global, 1 level
 	int               start_mode;  // -1 none, QRE_MODE_MATERIAL / QRE_MODE_LIGHT
 	qboolean          apply;
@@ -1805,6 +1844,35 @@ static void QRE_HostSetFogEnabled (qboolean enabled)
 	}
 
 	Cvar_SetROM ("fog_enabled", enabled ? "1" : "0");
+}
+
+static void QRE_HostSetFog (float density, float r, float g, float b)
+{
+	density = q_max (0.0f, density);
+	r = CLAMP (0.0f, r, 1.0f);
+	g = CLAMP (0.0f, g, 1.0f);
+	b = CLAMP (0.0f, b, 1.0f);
+
+	if (Tasks_IsWorker ())
+	{
+		qre_actions.fog_pending = true;
+		qre_actions.fog_density = density;
+		qre_actions.fog_color[0] = r;
+		qre_actions.fog_color[1] = g;
+		qre_actions.fog_color[2] = b;
+		return;
+	}
+
+	qre_actions.fog_pending = false;
+	Fog_Update (density, r, g, b, 0.0f);
+}
+
+static void QRE_ClearSunPlacement (void)
+{
+	cvar_t *var = Cvar_FindVar ("rt_sky_sun_edit");
+
+	if (var && CVAR_TO_BOOL (*var))
+		QR_Editor_HostCvarSet ("rt_sky_sun_edit", "0");
 }
 
 static void QRE_SetWorldPaused (qboolean paused)
@@ -2154,7 +2222,6 @@ static void QRE_DirToModel (const QrTransform *transform, const vec3_t dir, vec3
 		       + transform->matrix[2][i] * dir[2];
 }
 
-#define QRE_PICK_PLANE_EPS 1.0f
 #define QRE_PICK_POLY_EPS  0.05f
 
 static msurface_t *QRE_RayModelSurface (qmodel_t *model, const QrTransform *transform, vec3_t start, vec3_t dir,
@@ -2210,123 +2277,6 @@ static msurface_t *QRE_RayModelSurface (qmodel_t *model, const QrTransform *tran
 		*out_t = best_t;
 	VectorMA (start, best_t, dir, out_impact);
 	return best;
-}
-
-// Finds the surface of a model whose face contains the impact point. Coplanar
-// faces are told apart by a polygon test; the nearest plane is the fallback.
-// The impact is world space, while a brush entity's planes and polygons are in
-// its model space, so the point is transformed first (identity for the world).
-static msurface_t *QRE_FindSurface (qmodel_t *model, const vec3_t impact, const vec3_t raydir, const QrTransform *transform)
-{
-	vec3_t      local, localdir;
-	int         i;
-	msurface_t *exactface = NULL, *exactany = NULL;
-	msurface_t *nearface = NULL, *nearany = NULL;
-	msurface_t *bestplane = NULL;
-	float       exactface_t = 0.0f, exactface_fd = 0.0f, exactany_d = 0.0f;
-	float       nearface_t = 0.0f, nearface_fd = 0.0f, nearany_d = 0.0f;
-	float       bestplane_d = QRE_PICK_PLANE_EPS;
-
-	QRE_WorldToModel (transform, impact, local);
-	QRE_DirToModel (transform, raydir, localdir);
-
-	for (i = 0; i < model->nummodelsurfaces; i++)
-	{
-		msurface_t *s = &model->surfaces[model->firstmodelsurface + i];
-		vec3_t      snormal;
-		float       sdist, fd, den, t;
-		qboolean    exact = false, nearpoly = false;
-		glpoly_t   *p;
-
-		if (!s->texinfo || !s->texinfo->texture)
-			continue;
-		if (s->flags & (SURF_DRAWSKY | SURF_NOTEXTURE))
-			continue;
-
-		QRE_SurfacePlane (s, snormal, &sdist);
-		fd = DotProduct (snormal, local) - sdist;
-		if (fabsf (fd) > QRE_PICK_PLANE_EPS)
-			continue;
-
-		for (p = s->polys; p; p = p->next)
-		{
-			if (QRE_PointInPolygon (p, local, snormal, 0.0f))
-			{
-				exact = true;
-				break;
-			}
-		}
-
-		if (exact)
-			nearpoly = true;
-		else
-		{
-			for (p = s->polys; p; p = p->next)
-			{
-				if (QRE_PointInPolygon (p, local, snormal, QRE_PICK_POLY_EPS))
-				{
-					nearpoly = true;
-					break;
-				}
-			}
-		}
-
-		if (!nearpoly)
-		{
-			if (fabsf (fd) < bestplane_d)
-			{
-				bestplane_d = fabsf (fd);
-				bestplane = s;
-			}
-			continue;
-		}
-
-		if (exact)
-		{
-			if (!exactany || fabsf (fd) < exactany_d)
-			{
-				exactany_d = fabsf (fd);
-				exactany = s;
-			}
-		}
-		else if (!nearany || fabsf (fd) < nearany_d)
-		{
-			nearany_d = fabsf (fd);
-			nearany = s;
-		}
-
-		den = DotProduct (snormal, localdir);
-		if (den >= 0.0f)
-			continue;
-
-		t = (sdist - DotProduct (snormal, local)) / den;
-
-		if (exact)
-		{
-			if (!exactface || t < exactface_t || (t == exactface_t && fabsf (fd) < fabsf (exactface_fd)))
-			{
-				exactface = s;
-				exactface_t = t;
-				exactface_fd = fd;
-			}
-		}
-		else if (!nearface || t < nearface_t || (t == nearface_t && fabsf (fd) < fabsf (nearface_fd)))
-		{
-			nearface = s;
-			nearface_t = t;
-			nearface_fd = fd;
-		}
-	}
-
-	if (exactface)
-		return exactface;
-	if (exactany)
-		return exactany;
-	if (nearface)
-		return nearface;
-	if (nearany)
-		return nearany;
-	return bestplane;
 }
 
 // The skin texture a model entity draws: the alias frame at the animation the
@@ -2630,12 +2580,13 @@ static float QRE_TraceEntityBox (entity_t *e, const vec3_t start, const vec3_t e
 
 static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, entity_t **out_ent, gltexture_t **out_glt)
 {
-	vec3_t    start, end, dir;
-	float     best = 1.0f;
-	qmodel_t *bestmodel = NULL;
-	entity_t *bestent = NULL;
-	qboolean  bestisentity = false;
-	vec3_t    bestimpact = { 0, 0, 0 };
+	vec3_t      start, end, dir;
+	float       best = 1.0f;
+	qmodel_t   *bestmodel = NULL;
+	msurface_t *bestsurf = NULL;
+	entity_t   *bestent = NULL;
+	qboolean    bestisentity = false;
+	vec3_t      bestimpact = { 0, 0, 0 };
 
 	if (!cl.worldmodel)
 		return false;
@@ -2654,7 +2605,9 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 		{
 			best = t;
 			bestmodel = cl.worldmodel;
+			bestsurf = surf;
 			bestent = NULL;
+			bestisentity = false;
 			VectorCopy (impact, bestimpact);
 			Con_DPrintf ("qr editor pick: candidate world surf %d t %.4f tex '%s'\n",
 			             (int)(surf - cl.worldmodel->surfaces), t, surf->texinfo->texture->name);
@@ -2686,7 +2639,9 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 
 			best = t;
 			bestmodel = e->model;
+			bestsurf = surf;
 			bestent = e;
+			bestisentity = false;
 			VectorCopy (impact, bestimpact);
 			Con_DPrintf ("qr editor pick: candidate ent %d model '%s' surf %d t %.4f tex '%s'\n",
 			             i, e->model->name, (int)(surf - e->model->surfaces), t,
@@ -2717,6 +2672,7 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 				best = f;
 				bestent = e;
 				bestmodel = e->model;
+				bestsurf = NULL;
 				bestisentity = true;
 				Con_DPrintf ("qr editor pick: candidate ent %d model '%s' alias/sprite t %.4f\n",
 				             i, e->model->name, f);
@@ -2748,6 +2704,7 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 				{
 					best = t;
 					bestmodel = e->model;
+					bestsurf = surf;
 					bestent = e;
 					bestisentity = false;
 					VectorCopy (impact, bestimpact);
@@ -2766,6 +2723,7 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 					best = f;
 					bestent = e;
 					bestmodel = e->model;
+					bestsurf = NULL;
 					bestisentity = true;
 					Con_DPrintf ("qr editor pick: candidate static %d model '%s' alias/sprite t %.4f\n",
 					             i, e->model->name, f);
@@ -2795,13 +2753,9 @@ static qboolean QRE_TracePick (qmodel_t **out_model, msurface_t **out_surf, enti
 		return true;
 	}
 
-	{
-		QrTransform transform = RT_GetBrushModelMatrix (bestent);
-
-		*out_surf = QRE_FindSurface (bestmodel, bestimpact, vpn, &transform);
-	}
-	if (!*out_surf)
+	if (!bestsurf)
 		return false;
+	*out_surf = bestsurf;
 
 	VectorCopy (bestimpact, qre.pick_impact);
 
@@ -2897,8 +2851,10 @@ static void QRE_CursorMode (qboolean on)
 		QRE_CancelLightDrag ();
 		qre.custom_placing = false;
 		qre.custom_cloning = false;
+		qre.hover_light = -1;
 
 		qre.panel_open = true;
+		QRE_ClearSunPlacement ();
 
 		// The panel takes every key event (QR_Editor_GuiProcessEvent), so the
 		// key-up of a key held while the panel opens never reaches Key_Event:
@@ -2938,6 +2894,17 @@ static void QRE_DrainActions (void)
 
 		qre_actions.fog_enabled = -1;
 		Cvar_SetROM ("fog_enabled", enabled ? "1" : "0");
+	}
+
+	if (qre_actions.fog_pending)
+	{
+		const float density = qre_actions.fog_density;
+		const float r = qre_actions.fog_color[0];
+		const float g = qre_actions.fog_color[1];
+		const float b = qre_actions.fog_color[2];
+
+		qre_actions.fog_pending = false;
+		Fog_Update (density, r, g, b, 0.0f);
 	}
 
 	for (i = 0; i < qre_actions.cbuf_count; i++)
@@ -3423,12 +3390,105 @@ static void QRE_DoPick (qboolean select)
 // ---------------------------------------------------------------------------
 
 #define QRE_OUTLINE_MAX 256
+#define QRE_NEAR_CLIP   1.0f
+
+static qboolean QRE_ProjectClippedEdge (const vec3_t a, const vec3_t b,
+                                        const vec3_t forward, const vec3_t right, const vec3_t up,
+                                        float tan_x, float tan_y, float seg[4])
+{
+	vec3_t da, db;
+	float  xa, ya, za, xb, yb, zb;
+
+	VectorSubtract (a, r_refdef.vieworg, da);
+	VectorSubtract (b, r_refdef.vieworg, db);
+
+	za = DotProduct (da, forward);
+	zb = DotProduct (db, forward);
+	if (za <= QRE_NEAR_CLIP && zb <= QRE_NEAR_CLIP)
+		return false;
+
+	xa = DotProduct (da, right);
+	ya = DotProduct (da, up);
+	xb = DotProduct (db, right);
+	yb = DotProduct (db, up);
+
+	if (za < QRE_NEAR_CLIP)
+	{
+		const float t = (QRE_NEAR_CLIP - za) / (zb - za);
+
+		xa += t * (xb - xa);
+		ya += t * (yb - ya);
+		za = QRE_NEAR_CLIP;
+	}
+	else if (zb < QRE_NEAR_CLIP)
+	{
+		const float t = (QRE_NEAR_CLIP - za) / (zb - za);
+
+		xb = xa + t * (xb - xa);
+		yb = ya + t * (yb - ya);
+		zb = QRE_NEAR_CLIP;
+	}
+
+	seg[0] = (0.5f + 0.5f * (xa / za) / tan_x) * (float)glwidth;
+	seg[1] = (0.5f - 0.5f * (ya / za) / tan_y) * (float)glheight;
+	seg[2] = (0.5f + 0.5f * (xb / zb) / tan_x) * (float)glwidth;
+	seg[3] = (0.5f - 0.5f * (yb / zb) / tan_y) * (float)glheight;
+	return true;
+}
+
+static void QRE_EmitClippedPolygon (const vec3_t *world, int n, uint32_t color)
+{
+	const float deg2rad = 3.14159265f / 180.0f;
+	float       xy[(QRE_OUTLINE_MAX + 1) * 2];
+	qboolean    all_visible = true;
+	int         i;
+
+	if (n < 3 || n > QRE_OUTLINE_MAX || glwidth <= 0 || glheight <= 0)
+		return;
+
+	for (i = 0; i < n; i++)
+	{
+		if (!QRE_WorldToScreen (world[i], &xy[i * 2], &xy[i * 2 + 1]))
+		{
+			all_visible = false;
+			break;
+		}
+	}
+
+	if (all_visible)
+	{
+		xy[n * 2 + 0] = xy[0];
+		xy[n * 2 + 1] = xy[1];
+		QR_GUI_DrawPolyline (xy, n + 1, color, 2.0f);
+		return;
+	}
+
+	{
+		vec3_t forward, right, up;
+		float  tan_y, tan_x;
+
+		tan_y = tanf (r_fovy * deg2rad * 0.5f);
+		tan_x = tan_y * ((float)glwidth / (float)glheight);
+		if (tan_x <= 0.0f || tan_y <= 0.0f)
+			return;
+
+		AngleVectors (r_refdef.viewangles, forward, right, up);
+		for (i = 0; i < n; i++)
+		{
+			float seg[4];
+
+			if (QRE_ProjectClippedEdge (world[i], world[(i + 1) % n],
+			                            forward, right, up, tan_x, tan_y, seg))
+				QR_GUI_DrawPolyline (seg, 2, color, 2.0f);
+		}
+	}
+}
 
 static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, uint32_t color)
 {
 	QrTransform transform = RT_GetBrushModelMatrix (ent);
 	vec3_t      verts[QRE_OUTLINE_MAX];
-	float       xy[(QRE_OUTLINE_MAX + 1) * 2];
+	vec3_t      world[QRE_OUTLINE_MAX];
 	vec3_t      n_world, to_view, first;
 	float       nudge = 0.35f;
 	int         n = 0;
@@ -3480,23 +3540,15 @@ static void QRE_EmitOutline (qmodel_t *model, msurface_t *surf, entity_t *ent, u
 
 	for (i = 0; i < n; i++)
 	{
-		vec3_t world;
-
 		for (j = 0; j < 3; j++)
-			world[j] = transform.matrix[j][0] * verts[i][0]
-			         + transform.matrix[j][1] * verts[i][1]
-			         + transform.matrix[j][2] * verts[i][2]
-			         + transform.matrix[j][3]
-			         + nudge * n_world[j];
-
-		if (!QRE_WorldToScreen (world, &xy[i * 2], &xy[i * 2 + 1]))
-			return;
+			world[i][j] = transform.matrix[j][0] * verts[i][0]
+			            + transform.matrix[j][1] * verts[i][1]
+			            + transform.matrix[j][2] * verts[i][2]
+			            + transform.matrix[j][3]
+			            + nudge * n_world[j];
 	}
 
-	xy[n * 2 + 0] = xy[0];
-	xy[n * 2 + 1] = xy[1];
-
-	QR_GUI_DrawPolyline (xy, n + 1, color, 2.0f);
+	QRE_EmitClippedPolygon (world, n, color);
 }
 
 static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
@@ -3518,24 +3570,12 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 	{
 		mspriteframe_t *frame = R_GetSpriteFrame (ent);
 		vec3_t          quad[4];
-		float           xy[10];
-		int             k;
 
 		if (!frame)
 			return;
 
 		R_GetSpriteQuadCorners (ent, frame, quad);
-
-		for (k = 0; k < 4; k++)
-		{
-			if (!QRE_WorldToScreen (quad[k], &xy[k * 2], &xy[k * 2 + 1]))
-				return;
-		}
-
-		xy[8] = xy[0];
-		xy[9] = xy[1];
-
-		QR_GUI_DrawPolyline (xy, 5, color, 2.0f);
+		QRE_EmitClippedPolygon (quad, 4, color);
 		return;
 	}
 
@@ -3552,7 +3592,18 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 	transform = RT_GetModelTransform (m);
 
 	{
-		vec3_t box[8];
+		const float deg2rad = 3.14159265f / 180.0f;
+		vec3_t      box[8];
+		vec3_t      forward, right, up;
+		float       tan_y, tan_x;
+
+		if (glwidth <= 0 || glheight <= 0)
+			return;
+		tan_y = tanf (r_fovy * deg2rad * 0.5f);
+		tan_x = tan_y * ((float)glwidth / (float)glheight);
+		if (tan_x <= 0.0f || tan_y <= 0.0f)
+			return;
+		AngleVectors (r_refdef.viewangles, forward, right, up);
 
 		for (i = 0; i < 8; i++)
 		{
@@ -3575,12 +3626,9 @@ static void QRE_EmitBoxOutline (entity_t *ent, uint32_t color)
 		{
 			float seg[4];
 
-			if (!QRE_WorldToScreen (box[edges[i][0]], &seg[0], &seg[1]))
-				continue;
-			if (!QRE_WorldToScreen (box[edges[i][1]], &seg[2], &seg[3]))
-				continue;
-
-			QR_GUI_DrawPolyline (seg, 2, color, 2.0f);
+			if (QRE_ProjectClippedEdge (box[edges[i][0]], box[edges[i][1]],
+			                            forward, right, up, tan_x, tan_y, seg))
+				QR_GUI_DrawPolyline (seg, 2, color, 2.0f);
 		}
 	}
 }
@@ -4939,12 +4987,11 @@ static void QRE_MatWaterSection (void)
 
 	{
 		float   rgb[3];
-		int     en = 1;
 		cvar_t *var;
 
 		var = Cvar_FindVar ("rt_water_color");
 		RT_GetWaterColor (rgb);
-		if (QR_GUI_ColorHex ("rt_water_color", rgb, &en, "The color of the water surface."))
+		if (QR_GUI_ColorHex ("rt_water_color", rgb, NULL, "The color of the water surface."))
 			QRE_WaterColorSet ("rt_water_color", rgb);
 		if (QR_GUI_ResetButton ("rt_water_color",
 		                        qre_water_color_snapshot_set && var &&
@@ -4953,7 +5000,7 @@ static void QRE_MatWaterSection (void)
 
 		var = Cvar_FindVar ("rt_water_acidcolor");
 		RT_GetAcidColor (rgb);
-		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, &en, "The color of the acid."))
+		if (QR_GUI_ColorHex ("rt_water_acidcolor", rgb, NULL, "The color of the acid."))
 			QRE_WaterColorSet ("rt_water_acidcolor", rgb);
 		if (QR_GUI_ResetButton ("rt_water_acidcolor",
 		                        qre_acid_color_snapshot_set && var &&
@@ -5895,6 +5942,8 @@ static void QRE_TexturePreviewPump (void)
 		if (!result->ready)
 			continue;
 
+		result->ready = false;
+
 		if (job->epoch != qre_textbrowser_preview_epoch || !qre.texture_browser_open)
 		{
 			if (result->thumb)
@@ -5962,7 +6011,7 @@ static void QRE_TexturePreviewPump (void)
 
 	for (i = 0; i < job->count; i++)
 	{
-		if (job->results[i].thumb)
+		if (job->results[i].ready || job->results[i].thumb)
 			return;
 	}
 
@@ -6548,7 +6597,7 @@ typedef struct
 static const qre_light_field_t qre_light_fields[] = {
 	QRE_LF_ROW (QRE_LIGHT_F_RADIUS, has_radius, radius, false),
 	QRE_LF_ROW (QRE_LIGHT_F_INTENSITY, has_intensity, intensity, false),
-	QRE_LF_ROW (QRE_LIGHT_F_OFFSET, has_offset, offset, false),
+	QRE_LF_ROW (QRE_LIGHT_F_OFFSET, has_offset, offset, true),
 	QRE_LF_ROW (QRE_LIGHT_F_COLOR, has_color, color, false),
 	QRE_LF_ROW_NOHAS (QRE_LIGHT_F_FRAST, force_rasterize),
 	QRE_LF_ROW (QRE_LIGHT_F_STYLE, has_style, style, false),
@@ -6621,6 +6670,39 @@ static const rt_light_t *QRE_LightOriginal (const char *name)
 	return NULL;
 }
 
+static void QRE_NormalizeLightName (const char *name, char *out, size_t outsize)
+{
+	char  buf[RT_LIGHT_NAME_MAX];
+	char *hash;
+	char *dot;
+
+	q_strlcpy (buf, name ? name : "", sizeof (buf));
+	hash = strchr (buf, '#');
+	if (hash)
+		*hash = '\0';
+
+	RT_MAT_NormalizeName (buf, out, outsize);
+	dot = strrchr (out, '.');
+	if (dot && !strchr (dot, ':'))
+		*dot = '\0';
+
+	if (hash)
+	{
+		size_t len = strlen (out);
+
+		if (len + 1 < outsize)
+			q_snprintf (out + len, outsize - len, "#%s", hash + 1);
+	}
+}
+
+static void QRE_LightGroupBaseOf (const char *name, char *out, size_t outsize)
+{
+	char norm[RT_LIGHT_NAME_MAX];
+
+	QRE_NormalizeLightName (name, norm, sizeof (norm));
+	RT_MAT_GroupBaseOf (norm, out, outsize);
+}
+
 // One field of one entry.
 static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float v2, qboolean b)
 {
@@ -6632,9 +6714,24 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 		l->offset[0] = v0; l->offset[1] = v1; l->offset[2] = v2;
 		l->has_offset = true;
 		break;
-	case QRE_LIGHT_F_OFFSET_X:  l->offset[0] = v0; l->has_offset = true; break;
-	case QRE_LIGHT_F_OFFSET_Y:  l->offset[1] = v0; l->has_offset = true; break;
-	case QRE_LIGHT_F_OFFSET_Z:  l->offset[2] = v0; l->has_offset = true; break;
+	case QRE_LIGHT_F_OFFSET_X:
+		if (!l->has_offset)
+			VectorCopy (vec3_origin, l->offset);
+		l->offset[0] = v0;
+		l->has_offset = true;
+		break;
+	case QRE_LIGHT_F_OFFSET_Y:
+		if (!l->has_offset)
+			VectorCopy (vec3_origin, l->offset);
+		l->offset[1] = v0;
+		l->has_offset = true;
+		break;
+	case QRE_LIGHT_F_OFFSET_Z:
+		if (!l->has_offset)
+			VectorCopy (vec3_origin, l->offset);
+		l->offset[2] = v0;
+		l->has_offset = true;
+		break;
 	case QRE_LIGHT_F_COLOR:
 		if (v0 < 0.0f)
 		{
@@ -6657,6 +6754,7 @@ static void QRE_LightApply (rt_light_t *l, int field, float v0, float v1, float 
 	case QRE_LIGHT_F_STYLE:
 		l->style = (int)v0;
 		l->has_style = (v0 >= 0.0f);
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 		break;
 	default: break;
 	}
@@ -6697,9 +6795,14 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 	{
 		if (has)
 			*has = (*(const qboolean *)((const char *)orig + f->has_offset) != 0) ? true : false;
-		memcpy (value, QRE_LightFieldValue (orig, f), f->value_size);
+		if (has && !*has && f->clear_value)
+			memset (value, 0, f->value_size);
+		else
+			memcpy (value, QRE_LightFieldValue (orig, f), f->value_size);
 	}
 
+	if (field == QRE_LIGHT_F_STYLE)
+		Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 	QRE_TouchLight (l->name);
 }
 
@@ -6709,11 +6812,11 @@ static void QRE_LightApplyOriginal (rt_light_t *l, const rt_light_t *orig, int f
 // edit creates when they are missing. A light with the flag off is its own.
 static void QRE_LightApplyToGroup (const char *source_name, int field, float v0, float v1, float v2, qboolean b)
 {
-	char group[MAX_QPATH];
-	char g2[MAX_QPATH];
+	char group[RT_LIGHT_NAME_MAX];
+	char g2[RT_LIGHT_NAME_MAX];
 	int  count = 0, i;
 
-	RT_MAT_GroupBaseOf (source_name, group, sizeof (group));
+	QRE_LightGroupBaseOf (source_name, group, sizeof (group));
 
 	{
 		rt_light_t *list = RT_LIGHT_List (&count);
@@ -6722,7 +6825,7 @@ static void QRE_LightApplyToGroup (const char *source_name, int field, float v0,
 		{
 			if (!list[i].valid || !list[i].group_edit)
 				continue;
-			RT_MAT_GroupBaseOf (list[i].name, g2, sizeof (g2));
+			QRE_LightGroupBaseOf (list[i].name, g2, sizeof (g2));
 			if (!strcmp (g2, group))
 				QRE_LightApply (&list[i], field, v0, v1, v2, b);
 		}
@@ -6737,7 +6840,7 @@ static void QRE_LightApplyToGroup (const char *source_name, int field, float v0,
 
 			if (!lights[i].ready || !lights[i].name[0])
 				continue;
-			RT_MAT_GroupBaseOf (lights[i].name, g2, sizeof (g2));
+			QRE_LightGroupBaseOf (lights[i].name, g2, sizeof (g2));
 			if (strcmp (g2, group))
 				continue;
 
@@ -6753,8 +6856,8 @@ static void QRE_LightApplyToGroup (const char *source_name, int field, float v0,
 // authored" when it had none), so the group does not keep mixed values.
 static void QRE_LightResetField (rt_light_t *self, int field)
 {
-	char group[MAX_QPATH];
-	char g2[MAX_QPATH];
+	char group[RT_LIGHT_NAME_MAX];
+	char g2[RT_LIGHT_NAME_MAX];
 	int  count = 0, i;
 	rt_light_t *list;
 
@@ -6765,12 +6868,12 @@ static void QRE_LightResetField (rt_light_t *self, int field)
 	}
 
 	list = RT_LIGHT_List (&count);
-	RT_MAT_GroupBaseOf (self->name, group, sizeof (group));
+	QRE_LightGroupBaseOf (self->name, group, sizeof (group));
 	for (i = 0; i < count; i++)
 	{
 		if (!list[i].valid || !list[i].group_edit)
 			continue;
-		RT_MAT_GroupBaseOf (list[i].name, g2, sizeof (g2));
+		QRE_LightGroupBaseOf (list[i].name, g2, sizeof (g2));
 		if (!strcmp (g2, group))
 			QRE_LightApplyOriginal (&list[i], QRE_LightOriginal (list[i].name), field);
 	}
@@ -6823,19 +6926,19 @@ static qboolean QRE_LightFieldChanged (const rt_light_t *l, const rt_light_t *or
 // joining the group takes.
 static rt_light_t *QRE_LightGroupShared (const char *name, const rt_light_t *self)
 {
-	char group[MAX_QPATH];
-	char g2[MAX_QPATH];
+	char group[RT_LIGHT_NAME_MAX];
+	char g2[RT_LIGHT_NAME_MAX];
 	int  count = 0, i;
 	rt_light_t *list = RT_LIGHT_List (&count);
 
-	RT_MAT_GroupBaseOf (name, group, sizeof (group));
+	QRE_LightGroupBaseOf (name, group, sizeof (group));
 	for (i = 0; i < count; i++)
 	{
 		if (!list[i].valid || !list[i].group_edit || &list[i] == self)
 			continue;
 		if (!RT_LIGHT_HasFields (&list[i]))
 			continue; // a member with nothing authored has no values to share
-		RT_MAT_GroupBaseOf (list[i].name, g2, sizeof (g2));
+		QRE_LightGroupBaseOf (list[i].name, g2, sizeof (g2));
 		if (!strcmp (g2, group))
 			return &list[i];
 	}
@@ -6851,6 +6954,7 @@ static void QRE_LightJoinGroup (rt_light_t *l)
 		QRE_LightCopyFields (l, shared);
 	}
 	l->group_edit = true;
+	Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 	QRE_TouchLight (l->name);
 }
 
@@ -6937,20 +7041,20 @@ static int QRE_LightFieldDiffers (const rt_light_t *l, const rt_light_t *self, i
 
 static int QRE_LightGroupMixedMask (const rt_light_t *self, int field)
 {
-	char        base[MAX_QPATH];
-	char        g2[MAX_QPATH];
+	char        base[RT_LIGHT_NAME_MAX];
+	char        g2[RT_LIGHT_NAME_MAX];
 	int         count = 0, i, mask = 0;
 	rt_light_t *list = RT_LIGHT_List (&count);
 	const int   kind = qre.sel_light.kind;
 
-	RT_MAT_GroupBaseOf (self->name, base, sizeof (base));
+	QRE_LightGroupBaseOf (self->name, base, sizeof (base));
 	for (i = 0; i < count; i++)
 	{
 		const rt_light_t *l = &list[i];
 
 		if (!l->valid || !l->group_edit || l == self)
 			continue;
-		RT_MAT_GroupBaseOf (l->name, g2, sizeof (g2));
+		QRE_LightGroupBaseOf (l->name, g2, sizeof (g2));
 		if (strcmp (g2, base))
 			continue;
 
@@ -6962,11 +7066,15 @@ static int QRE_LightGroupMixedMask (const rt_light_t *self, int field)
 
 		for (i = 0; i < count; i++)
 		{
+			char        norm[RT_LIGHT_NAME_MAX];
 			rt_light_t *l;
 
-			if (!tracked[i].ready || !tracked[i].name[0] || !strcmp (tracked[i].name, self->name))
+			if (!tracked[i].ready || !tracked[i].name[0])
 				continue;
-			RT_MAT_GroupBaseOf (tracked[i].name, g2, sizeof (g2));
+			QRE_NormalizeLightName (tracked[i].name, norm, sizeof (norm));
+			if (!strcmp (norm, self->name))
+				continue;
+			RT_MAT_GroupBaseOf (norm, g2, sizeof (g2));
 			if (strcmp (g2, base))
 				continue;
 
@@ -7377,6 +7485,12 @@ static void QRE_LightGlobalTab (void)
 		{
 			float value = var->value;
 
+			if (!strcmp (g->name, "rt_sky_sun_yaw") && (value < -180.0f || value > 180.0f))
+			{
+				value = anglemod (value);
+				if (value > 180.0f)
+					value -= 360.0f;
+			}
 			if (QR_GUI_SliderFloat (g->name, &value, g->min, g->max, g->tip))
 				QR_Editor_HostCvarSet (g->name, va ("%.4g", value));
 			break;
@@ -7392,10 +7506,9 @@ static void QRE_LightGlobalTab (void)
 		case QRE_G_COLOR:
 		{
 			float rgb[3];
-			int   en = 1;
 
 			QRE_GlobalColorGet (g->name, rgb);
-			if (QR_GUI_ColorHex (g->name, rgb, &en, g->tip))
+			if (QR_GUI_ColorHex (g->name, rgb, NULL, g->tip))
 				QRE_GlobalColorSet (g->name, rgb);
 			break;
 		}
@@ -7404,17 +7517,24 @@ static void QRE_LightGlobalTab (void)
 		}
 
 		{
-			const qboolean changed = qre_globals_snapshot_set[i] &&
-			                         strcmp (var->string ? var->string : "", qre_globals_snapshot[i]) != 0;
+			const char *baseline = RT_SkySettings_IsManaged (g->name)
+			                       ? RT_SkySettings_ActiveBaseline (g->name)
+			                       : NULL;
+			qboolean    changed;
 
-			if (QR_GUI_ResetButton (g->name, changed))
-				QR_Editor_HostCvarSet (g->name, qre_globals_snapshot[i]);
+			if (!baseline && qre_globals_snapshot_set[i])
+				baseline = qre_globals_snapshot[i];
+			changed = (baseline != NULL) &&
+			          strcmp (var->string ? var->string : "", baseline) != 0;
+
+			if (QR_GUI_ResetButton (g->name, changed) && baseline)
+				QR_Editor_HostCvarSet (g->name, baseline);
 		}
 	}
 
 	// The level's fog itself: the color and the density are map data, not cvars,
-	// so they go through the `fog` command (the same path a map's key and the
-	// console use) while the getters keep the widgets in step with the map.
+	// so edits apply directly via Fog_Update on the main thread while the getters
+	// keep the widgets in step with the map.
 	QR_GUI_Label ("Fog");
 
 	{
@@ -7428,32 +7548,30 @@ static void QRE_LightGlobalTab (void)
 
 	float    color[4];
 	float    density = Fog_GetDensity ();
-	int      en = 1;
 	qboolean changed = false;
 
 	Fog_GetColor (color);
 	color[3] = 1.0f;
 
-	if (QR_GUI_ColorHex ("fog_color", color, &en, "The color of the level's fog."))
+	if (QR_GUI_ColorHex ("fog_color", color, NULL, "The color of the level's fog."))
 		changed = true;
-	if (QR_GUI_ResetButton ("fog_color", color[0] != qre.snap_fog_color[0] ||
-	                                        color[1] != qre.snap_fog_color[1] ||
-	                                        color[2] != qre.snap_fog_color[2]))
+	if (QR_GUI_ResetButton ("fog_color", QRE_FogFloatDiffers (color[0], qre.snap_fog_color[0]) ||
+	                                        QRE_FogFloatDiffers (color[1], qre.snap_fog_color[1]) ||
+	                                        QRE_FogFloatDiffers (color[2], qre.snap_fog_color[2])))
 	{
 		VectorCopy (qre.snap_fog_color, color);
 		changed = true;
 	}
 	if (QR_GUI_SliderFloat ("fog_density", &density, 0.0f, 4.0f, "How thick the level's fog is; 0 turns it off."))
 		changed = true;
-	if (QR_GUI_ResetButton ("fog_density", density != qre.snap_fog_density))
+	if (QR_GUI_ResetButton ("fog_density", QRE_FogFloatDiffers (density, qre.snap_fog_density)))
 	{
 		density = qre.snap_fog_density;
 		changed = true;
 	}
 
 	if (changed)
-		QR_Editor_HostCbufAddText (va ("fog %f %f %f %f\n", density,
-		                  CLAMP (0.0f, color[0], 1.0f), CLAMP (0.0f, color[1], 1.0f), CLAMP (0.0f, color[2], 1.0f)));
+		QRE_HostSetFog (density, color[0], color[1], color[2]);
 
 	QR_GUI_Spacing ();
 	QR_GUI_LabelDim ("the values above are saved to the config by Save; Cancel puts them back");
@@ -7477,16 +7595,21 @@ static void QRE_SelectCustomLight (int index)
 	if (index < 0 || index >= count)
 	{
 		qre.sel_light_valid = false;
+		memset (&qre.sel_light, 0, sizeof (qre.sel_light));
+		qre.pick_name[0] = '\0';
 		return;
 	}
 
+	memset (&qre.sel_light, 0, sizeof (qre.sel_light));
+	qre.pick_name[0] = '\0';
 	qre.sel_light_valid = true;
+	qre.sel_light.ready = true;
 	qre.sel_light.kind = RT_LIGHT_KIND_CUSTOM;
 	qre.sel_light.uniqueID = (uint64_t)UINT32_MAX + 1 + (uint64_t)index;
 	VectorCopy (lights[index].origin, qre.sel_light.position);
 	if (lights[index].has_offset)
 		VectorAdd (qre.sel_light.position, lights[index].offset, qre.sel_light.position);
-	qre.sel_light.radius = lights[index].radius;
+	qre.sel_light.radius = METRIC_TO_QUAKEUNIT (lights[index].radius);
 	VectorCopy (lights[index].color, qre.sel_light.color);
 
 	{
@@ -7599,6 +7722,7 @@ static void QRE_CustomLightsTab (void)
 	{
 		// the light is created where the crosshair points: the cursor mode goes
 		// off so the camera aims, and the fire button drops it (in_sdl.c)
+		qre.custom_cloning = false;
 		qre.custom_placing = true;
 		QRE_CursorMode (false);
 	}
@@ -7835,12 +7959,12 @@ static void QRE_SelectEntityLight (const rt_tracked_light_t *l)
 
 static void QRE_LightEntityFields (void)
 {
-	char        ikey[MAX_QPATH];
+	char        ikey[RT_LIGHT_NAME_MAX];
 	rt_light_t *inst = NULL;
 	rt_light_t *shared = NULL;
 	rt_light_t *light = NULL;
 
-	if (qre.sel_light_valid && qre.sel_light.name[0])
+	if (qre.sel_light_valid && qre.sel_light.kind != RT_LIGHT_KIND_CUSTOM && qre.sel_light.name[0])
 	{
 		RT_LIGHT_MakeKey (qre.sel_light.name, qre.sel_light.uniqueID, ikey, sizeof (ikey));
 		inst = RT_LIGHT_Find (ikey);
@@ -7872,6 +7996,7 @@ static void QRE_LightEntityFields (void)
 					// drops any persisted #uniqueID block from qray.lights.yaml
 					RT_LIGHT_Remove (ikey);
 					QRE_TouchLight (ikey);
+					Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 					inst = NULL;
 					light = RT_LIGHT_Ensure (qre.sel_light.name);
 					if (light)
@@ -7917,6 +8042,7 @@ static void QRE_LightEntityFields (void)
 				{
 					*own = *orig_inst;
 					QRE_TouchLight (ikey);
+					Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 					inst = own;
 					light = own;
 				}
@@ -7928,6 +8054,7 @@ static void QRE_LightEntityFields (void)
 				{
 					RT_LIGHT_Remove (ikey);
 					QRE_TouchLight (ikey);
+					Atomic_StoreUInt32 (&rt_require_world_light_recollect, true);
 					inst = NULL;
 					light = RT_LIGHT_Ensure (qre.sel_light.name);
 				}
@@ -8095,6 +8222,10 @@ static void QRE_LightEntityFields (void)
 				QRE_LightResetField (light, QRE_LIGHT_F_FRAST);
 		}
 	}
+	else if (qre.sel_light_valid && qre.sel_light.kind == RT_LIGHT_KIND_CUSTOM)
+	{
+		QR_GUI_LabelDim ("a custom light is selected (edit it in the Custom tab)");
+	}
 	else if (qre.sel_light_valid)
 	{
 		QR_GUI_LabelDim ("this light has no emitter name: there is nothing to save its fields to");
@@ -8191,7 +8322,7 @@ static void QRE_BuildLightPanelGUI (void)
 {
 	int         panel_w = glwidth / 4;
 	rt_light_t *inst = NULL;
-	char        ikey[MAX_QPATH];
+	char        ikey[RT_LIGHT_NAME_MAX];
 
 	if (panel_w < 352)
 		panel_w = 352;
@@ -8200,7 +8331,7 @@ static void QRE_BuildLightPanelGUI (void)
 
 	QR_GUI_Label ("LIGHT EDITOR");
 	QRE_RefreshSelectedLight ();
-	if (qre.sel_light_valid && qre.sel_light.name[0])
+	if (qre.sel_light_valid && qre.sel_light.kind != RT_LIGHT_KIND_CUSTOM && qre.sel_light.name[0])
 	{
 		// "(own)" marks a light that left its group and has an entry of its
 		// own, keyed by the emitter and the instance id (the fields below use
@@ -8240,9 +8371,9 @@ static void QRE_BuildLightPanelGUI (void)
 		return;
 	}
 
-	if (qre.sel_light_valid)
+	if (qre.sel_light_valid && qre.sel_light.kind != RT_LIGHT_KIND_CUSTOM)
 	{
-		char buf[MAX_QPATH + 64];
+		char buf[RT_LIGHT_NAME_MAX + 64];
 
 		q_snprintf (buf, sizeof (buf), "light: %s%s", qre.sel_light.name[0] ? qre.sel_light.name : "(no emitter name)",
 		            inst ? "  (own)" : "");
@@ -8329,9 +8460,9 @@ static void QRE_Frame (void)
 		return;
 	}
 
-	// the level went away under the editor: drop it (the material snapshot may
-	// be stale relative to a freshly loaded map list, so nothing is restored)
-	if (cls.state != ca_connected || !cl.worldmodel)
+	// the level went away or entered intermission / incomplete signon under the
+	// editor: drop it cleanly (nothing is restored onto the new map)
+	if (cls.state != ca_connected || !cl.worldmodel || cls.signon != SIGNONS || cl.intermission)
 	{
 		QRE_StopEditor (false);
 		return;
@@ -8433,6 +8564,8 @@ void QR_Editor_DrawPanel (cb_context_t *cbx)
 		return;
 
 	QRE_Frame ();
+	if (!qre.active || qre_actions.stop)
+		return;
 
 	// while the console is up it owns the screen; the editor state is kept
 	if (key_dest != key_game)
@@ -8785,15 +8918,18 @@ static qboolean QRE_WorldToScreen (const vec3_t p, float *out_x, float *out_y)
 	vec3_t      forward, right, up, d;
 	float       depth, tan_x, tan_y;
 
+	if (glwidth <= 0 || glheight <= 0)
+		return false;
+
 	AngleVectors (r_refdef.viewangles, forward, right, up);
 	VectorSubtract (p, r_refdef.vieworg, d);
 
 	depth = DotProduct (d, forward);
-	if (depth <= 1.0f)
+	if (depth <= QRE_NEAR_CLIP)
 		return false;
 
-	tan_x = tanf (r_refdef.fov_x * deg2rad * 0.5f);
-	tan_y = tanf (r_refdef.fov_y * deg2rad * 0.5f);
+	tan_y = tanf (r_fovy * deg2rad * 0.5f);
+	tan_x = tan_y * ((float)glwidth / (float)glheight);
 	if (tan_x <= 0.0f || tan_y <= 0.0f)
 		return false;
 
@@ -10261,7 +10397,7 @@ static int QRE_LightWriteMissing (FILE *out, qboolean *written)
 // does not understand survive a save.
 static int QRE_WriteLightSession (void)
 {
-	char        names[QRE_SESSION_NAMES_MAX][MAX_QPATH];
+	char        names[QRE_SESSION_NAMES_MAX][RT_LIGHT_NAME_MAX];
 	int         name_count = 0;
 	int         orig_name_count = 0;
 	char        level[64];
@@ -10305,7 +10441,7 @@ static int QRE_WriteLightSession (void)
 				break;
 		}
 		if (n == name_count)
-			q_strlcpy (names[name_count++], qre.light_touched[i], MAX_QPATH);
+			q_strlcpy (names[name_count++], qre.light_touched[i], RT_LIGHT_NAME_MAX);
 	}
 
 	RT_CustomLights_LevelKey (cl.worldmodel ? cl.worldmodel->name : "", level, sizeof (level));
@@ -10419,7 +10555,7 @@ static int QRE_WriteLightSession (void)
 
 			if (in_lights && (!strncmp (p, "- name:", 7) || !strncmp (p, "name:", 5)))
 			{
-				char name[MAX_QPATH];
+				char name[RT_LIGHT_NAME_MAX];
 				int  touched;
 
 				QRE_ParseYamlNameValue (strchr (p, ':') + 1, name, sizeof (name));
@@ -10672,6 +10808,7 @@ static void QRE_BackToChooser (void)
 	QRE_CustomGizmoCancel ();
 	qre.custom_dragging = false;
 	QRE_CancelLightDrag ();
+	QRE_ClearSunPlacement ();
 	QRE_DtalDebugOff ();
 	RT_SkySettings_EndSession ();
 	qre.mat_tab = 0;
@@ -11448,7 +11585,7 @@ static qre_textbrowser_build_job_t *QRE_TextureBrowserCreateBuildJob (void)
 			for (d = 0; d < (int)countof (pkz_dirs); d++)
 			{
 				for (e = 0; e < (int)countof (pkz_exts); e++)
-					RT_PKZ_ListFiles (pkz_dirs[d], pkz_exts[e], QRE_TextureBrowserCollectPkzFile, &ctx);
+					RT_PKZ_ListArchiveFiles (search->rt_pkz, pkz_dirs[d], pkz_exts[e], QRE_TextureBrowserCollectPkzFile, &ctx);
 			}
 		}
 		else
@@ -11852,6 +11989,8 @@ static void QRE_StopEditor (qboolean restore)
 	// revert whatever was not saved, then restore the player's view
 	QRE_CancelLightDrag ();
 	QRE_CustomGizmoCancel ();
+	qre.panel_open = true;
+	QRE_ClearSunPlacement ();
 	QRE_DtalDebugOff ();
 	if (!qre.choosing)
 	{
@@ -12029,9 +12168,9 @@ static void QRE_StartEditor (void)
 		Con_Printf ("qr editor: already running\n");
 		return;
 	}
-	if (cls.state != ca_connected || !cl.worldmodel)
+	if (cls.state != ca_connected || !cl.worldmodel || cls.signon != SIGNONS || cl.intermission)
 	{
-		Con_Printf ("qr editor: a level must be loaded first\n");
+		Con_Printf ("qr editor: a playable level must be loaded first\n");
 		return;
 	}
 	if (!sv.active || svs.maxclients > 1 || cls.demoplayback)
@@ -12255,6 +12394,9 @@ qboolean QR_Editor_ShowViewModel (void)
 void QR_Editor_SunPlacement (qboolean on)
 {
 	if (!qre.active)
+		return;
+	if (on && (qre.choosing || qre.mode != QRE_MODE_LIGHT ||
+	           qre.reset_prompt || qre.regen_prompt || qre.exit_prompt))
 		return;
 
 	QRE_CursorMode (!on);

@@ -399,8 +399,11 @@ static void RT_UploadSunLight (void)
 		// so they follow the sun too, including the fraction.
 		VectorScale (color, RT_SUN_LIGHT_INTENSITY_SCALE, color);
 
+		// Reserve a distinct uniqueID above flashlight (+0), custom lights
+		// (+1 .. +RT_CUSTOM_LIGHTS_MAX), and the editor torch
+		// (+1 + RT_CUSTOM_LIGHTS_MAX) so Custom Light #0 cannot shadow the sun.
 		QrDirectionalLightUploadInfo info = {
-			.uniqueID = (uint64_t)UINT32_MAX + 1,
+			.uniqueID = (uint64_t)UINT32_MAX + 2 + RT_CUSTOM_LIGHTS_MAX,
 			.color = {color[0], color[1], color[2]},
 			.direction = {forward[0], forward[1], forward[2]},
 			.angularDiameterDegrees = 0.05f,
@@ -481,7 +484,7 @@ static void RT_UploadAllDlights ()
 		for (int i = 0; i < custom_count; i++)
 		{
 			const rt_custom_light_t *l = &custom[i];
-			float                    intensity = (l->intensity > 0.0f) ? l->intensity : 1.0f;
+			float                    intensity = q_max (0.0f, l->intensity);
 
 			if (!RT_LightBudgetTake (1))
 			{

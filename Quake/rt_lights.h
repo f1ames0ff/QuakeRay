@@ -16,10 +16,12 @@
 
 // The most entries a lights.yaml list (and a session) can hold.
 #define RT_LIGHT_NAMES_MAX 256
+// Wide enough for a MAX_QPATH emitter name plus a "#<uint64>" instance suffix.
+#define RT_LIGHT_NAME_MAX  (MAX_QPATH + 24)
 
 typedef struct rt_light_s
 {
-    char     name[MAX_QPATH];  // the emitter the light belongs to (a texture name)
+    char     name[RT_LIGHT_NAME_MAX]; // the emitter the light belongs to (a texture name or name#id)
     qboolean valid;
     qboolean has_radius;
     float    radius;           // the size of the light, in the units of rt_dlight_radius
@@ -81,11 +83,11 @@ void RT_LIGHT_WriteEntry (FILE *f, const rt_light_t *l);
 const char *RT_LIGHT_Header (void);
 // The names a lights.yaml carries ("- name: x" lines; comments and quotes are
 // understood). Returns the count.
-int  RT_LIGHT_ReadNames (const char *path, char (*names)[MAX_QPATH], int max);
+int  RT_LIGHT_ReadNames (const char *path, char (*names)[RT_LIGHT_NAME_MAX], int max);
 // Writes the named entries from the live list into lights.yaml; an entry with no
 // field authored is not written. Returns false when nothing was written (the
 // file is not created then, or removed if it existed).
-qboolean RT_LIGHT_Write (const char *path, char (*names)[MAX_QPATH], int count);
+qboolean RT_LIGHT_Write (const char *path, char (*names)[RT_LIGHT_NAME_MAX], int count);
 
 // True when at least one field is authored (what the writer asks).
 qboolean RT_LIGHT_HasFields (const rt_light_t *l);
@@ -270,6 +272,10 @@ void RT_SkySettings_SetScope (qboolean level);
 void RT_SkySettings_SetScopeNoCapture (qboolean level);
 // Whether the active sky scope is level-local (true) or global (false).
 qboolean RT_SkySettings_IsLevelScope (void);
+// Session-start baseline string for cvar in the currently active scope (global
+// baseline when global scope is active; level override or global fallback when
+// level scope is active). Returns NULL outside a session or for non-sky cvars.
+const char *RT_SkySettings_ActiveBaseline (const char *cvar);
 // Whether this session changed the level's "sky:" block, the global config
 // sky settings, or either of them.
 qboolean RT_SkySettings_LevelDirty (void);

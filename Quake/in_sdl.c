@@ -623,12 +623,15 @@ void IN_MouseMove (usercmd_t *cmd)
 	// look never becomes player movement (no +mlook required)
 	if (QR_Editor_Flying ())
 	{
-		cl.viewangles[YAW] -= m_yaw.value * dmx;
-		cl.viewangles[PITCH] += m_pitch.value * dmy;
-		if (cl.viewangles[PITCH] > cl_maxpitch.value)
-			cl.viewangles[PITCH] = cl_maxpitch.value;
-		if (cl.viewangles[PITCH] < cl_minpitch.value)
-			cl.viewangles[PITCH] = cl_minpitch.value;
+		if (key_dest == key_game)
+		{
+			cl.viewangles[YAW] -= m_yaw.value * dmx;
+			cl.viewangles[PITCH] += m_pitch.value * dmy;
+			if (cl.viewangles[PITCH] > cl_maxpitch.value)
+				cl.viewangles[PITCH] = cl_maxpitch.value;
+			if (cl.viewangles[PITCH] < cl_minpitch.value)
+				cl.viewangles[PITCH] = cl_minpitch.value;
+		}
 		return;
 	}
 
