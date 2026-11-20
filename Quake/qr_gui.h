@@ -18,11 +18,18 @@ extern "C" {
 #endif
 
 // Creates the ImGui context, the SDL2 input backend and the font atlas.
-// qr_instance is the QrInstance the draw lists are uploaded to; font_path may
-// be NULL, the default ImGui font is used then.
+// qr_instance is the QrInstance the draw lists are uploaded to; font_data (if
+// non-NULL, allocated with malloc) transfers ownership to the bridge and is
+// freed on failure/early-return or during QR_GUI_Shutdown. Passing NULL uses
+// the default ImGui font.
 void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size);
 int  QR_GUI_Ready (void);
 void QR_GUI_Shutdown (void);
+
+// Runs main-thread-only SDL2 platform updates (window metrics, mouse/focus
+// sync, deferred clipboard/IME flushes) before the render task graph is
+// submitted, so SCR_DrawGUI on a worker thread never touches SDL2 APIs.
+void QR_GUI_PrepareMainThreadFrame (float dt);
 
 // One ImGui frame. SCR_UpdateScreen can run more than once per host frame, so
 // the frame id guards against a second NewFrame; returns 0 when the id was

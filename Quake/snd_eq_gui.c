@@ -23,9 +23,18 @@
 #include "snd_eq.h"
 #include "qr_gui.h"
 
-static qboolean eq_dialog_open;
-static int      eq_drag_band = -1;
-static keydest_t eq_previous_dest;
+typedef struct
+{
+	float        gain[SNDEQ_BANDS];
+	unsigned int gain_mask;
+	qboolean     reset;
+	qboolean     close;
+} sndeq_pending_t;
+
+static qboolean        eq_dialog_open;
+static int             eq_drag_band = -1;
+static keydest_t       eq_previous_dest;
+static sndeq_pending_t eq_pending;
 
 extern SDL_mutex *snd_mutex;
 
@@ -45,6 +54,7 @@ static void SNDEQ_SetDialogOpen (qboolean open)
 		return;
 
 	eq_dialog_open = open;
+	eq_pending.close = false;
 
 	if (open)
 	{
@@ -124,7 +134,11 @@ static void SNDEQ_ResetBands (void)
 	int i;
 
 	for (i = 0; i < SNDEQ_BandCount (); i++)
-		Cvar_SetValueQuick (SNDEQ_BandCvar (i), 0.0f);
+	{
+		cvar_t *cv = SNDEQ_BandCvar (i);
+		if (cv)
+			Cvar_SetValueQuick (cv, 0.0f);
+	}
 	SNDEQ_RequestRebuild ();
 }
 
@@ -165,23 +179,104 @@ static void SNDEQ_DrawGrid (void)
 	}
 }
 
+static float SNDEQ_ResponseDbSnapshot (float freq, int rate, const float *gains, int band_count)
+{
+	double db = 0.0;
+	int    b;
+
+	if (rate <= 0 || freq <= 0.0f || freq >= (float)rate * 0.5f)
+		return 0.0f;
+
+	for (b = 0; b < band_count; b++)
+	{
+		double gain = (double)gains[b];
+		double band_freq = (double)SNDEQ_BandFrequency (b);
+		double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+		double w, cw, sw, c2w, s2w;
+		double nr, ni, dr, di, power;
+
+		if (band_freq < (double)rate * 0.5 && fabs (gain) > 0.001 && isfinite (gain))
+		{
+			double a = pow (10.0, gain / 40.0);
+			double bw = 2.0 * M_PI * band_freq / (double)rate;
+			double cosw = cos (bw);
+			double alpha = sin (bw) / (2.0 * 0.9);
+			double a0 = 1.0 + alpha / a;
+
+			b0 = (1.0 + alpha * a) / a0;
+			b1 = (-2.0 * cosw) / a0;
+			b2 = (1.0 - alpha * a) / a0;
+			a1 = (-2.0 * cosw) / a0;
+			a2 = (1.0 - alpha / a) / a0;
+		}
+
+		w = 2.0 * M_PI * (double)freq / (double)rate;
+		cw = cos (w);
+		sw = sin (w);
+		c2w = cos (2.0 * w);
+		s2w = sin (2.0 * w);
+
+		nr = b0 + b1 * cw + b2 * c2w;
+		ni = -(b1 * sw + b2 * s2w);
+		dr = 1.0 + a1 * cw + a2 * c2w;
+		di = -(a1 * sw + a2 * s2w);
+
+		power = (nr * nr + ni * ni) / (dr * dr + di * di);
+		if (power > 1.0e-12)
+			db += 10.0 * log10 (power);
+	}
+
+	return (float)db;
+}
+
 void SNDEQ_DrawDialog (void)
 {
-	float gx = 0.0f, gy = 0.0f, mouse_x = 0.0f, mouse_y = 0.0f;
-	float hx[SNDEQ_BANDS], hy[SNDEQ_BANDS];
-	int   canvas, i, rate;
+	float    gx = 0.0f, gy = 0.0f, mouse_x = 0.0f, mouse_y = 0.0f;
+	float    hx[SNDEQ_BANDS], hy[SNDEQ_BANDS], band_gain[SNDEQ_BANDS];
+	int      canvas, i, rate, band_count;
+	qboolean eq_active = false;
 
 	if (!eq_dialog_open || !QR_GUI_Ready ())
 		return;
 
-	SDL_LockMutex (snd_mutex);
+	band_count = SNDEQ_BandCount ();
+	if (band_count > SNDEQ_BANDS)
+		band_count = SNDEQ_BANDS;
+
+	// Snapshot sound state under snd_mutex and release the lock before any
+	// ImGui calls or UI draw uploads so SCR_DrawGUI never blocks S_ExtraUpdate
+	// or mutates cvars/input state from the worker thread.
+	if (snd_mutex)
+		SDL_LockMutex (snd_mutex);
+	rate = (snd_output.speed > 0) ? snd_output.speed : 48000;
+	for (i = 0; i < band_count; i++)
+	{
+		cvar_t *cv = SNDEQ_BandCvar (i);
+		band_gain[i] = cv ? cv->value : 0.0f;
+	}
+	if (snd_mutex)
+		SDL_UnlockMutex (snd_mutex);
+
+	if (eq_pending.reset)
+	{
+		for (i = 0; i < band_count; i++)
+			band_gain[i] = 0.0f;
+	}
+	if (eq_pending.gain_mask != 0)
+	{
+		for (i = 0; i < band_count; i++)
+		{
+			if (eq_pending.gain_mask & (1u << i))
+				band_gain[i] = eq_pending.gain[i];
+		}
+	}
+
 	QR_GUI_Backdrop (0.7f);
 	QR_GUI_PushWindowPadding (24.0f, 16.0f);
 	if (QR_GUI_BeginDialog ("Equalizer", EQ_GRAPH_W + 48.0f) == 0)
 	{
 		QR_GUI_EndDialog ();
 		QR_GUI_PopWindowPadding ();
-		SDL_UnlockMutex (snd_mutex);
 		return;
 	}
 
@@ -193,24 +288,25 @@ void SNDEQ_DrawDialog (void)
 	mouse_x -= gx;
 	mouse_y -= gy;
 
-	for (i = 0; i < SNDEQ_BandCount (); i++)
+	for (i = 0; i < band_count; i++)
 	{
 		hx[i] = SNDEQ_FreqToX ((float)SNDEQ_BandFrequency (i));
-		hy[i] = SNDEQ_DbToY (SNDEQ_BandCvar (i)->value);
+		hy[i] = SNDEQ_DbToY (band_gain[i]);
 	}
 
 	if (canvas & 2)
 	{
 		if (eq_drag_band == -1)
 		{
-			for (i = 0; i < SNDEQ_BandCount (); i++)
+			for (i = 0; i < band_count; i++)
 			{
 				if (fabsf (mouse_x - hx[i]) < 14.0f && fabsf (mouse_y - hy[i]) < 14.0f)
 				{
 					if (QR_GUI_CtrlDown ())
 					{
-						Cvar_SetValueQuick (SNDEQ_BandCvar (i), 0.0f);
-						SNDEQ_RequestRebuild ();
+						band_gain[i] = 0.0f;
+						eq_pending.gain[i] = 0.0f;
+						eq_pending.gain_mask |= (1u << i);
 						hy[i] = SNDEQ_DbToY (0.0f);
 						eq_drag_band = -2;
 					}
@@ -220,7 +316,7 @@ void SNDEQ_DrawDialog (void)
 				}
 			}
 		}
-		if (eq_drag_band >= 0)
+		if (eq_drag_band >= 0 && eq_drag_band < band_count)
 		{
 			float db = SNDEQ_YToDb (mouse_y);
 
@@ -228,7 +324,9 @@ void SNDEQ_DrawDialog (void)
 				db = 12.0f;
 			else if (db < -12.0f)
 				db = -12.0f;
-			Cvar_SetValueQuick (SNDEQ_BandCvar (eq_drag_band), db);
+			band_gain[eq_drag_band] = db;
+			eq_pending.gain[eq_drag_band] = db;
+			eq_pending.gain_mask |= (1u << eq_drag_band);
 			hy[eq_drag_band] = SNDEQ_DbToY (db);
 		}
 	}
@@ -238,15 +336,13 @@ void SNDEQ_DrawDialog (void)
 	QR_GUI_CanvasRect (0.0f, 0.0f, EQ_GRAPH_W, EQ_GRAPH_H, SNDEQ_Color (13, 15, 19, 255));
 	SNDEQ_DrawGrid ();
 
-	for (i = 0; i < SNDEQ_BandCount (); i++)
+	for (i = 0; i < band_count; i++)
 		QR_GUI_CanvasLine (hx[i], 0.0f, hx[i], EQ_GRAPH_H, SNDEQ_Color (250, 210, 90, 40), 1.0f);
-
-	rate = (snd_output.speed > 0) ? snd_output.speed : 48000;
 
 	for (i = 0; i < (int)EQ_GRAPH_W; i += 2)
 	{
-		float db0 = SNDEQ_ResponseDb (SNDEQ_XToFreq ((float)i), rate);
-		float db1 = SNDEQ_ResponseDb (SNDEQ_XToFreq ((float)(i + 2)), rate);
+		float db0 = SNDEQ_ResponseDbSnapshot (SNDEQ_XToFreq ((float)i), rate, band_gain, band_count);
+		float db1 = SNDEQ_ResponseDbSnapshot (SNDEQ_XToFreq ((float)(i + 2)), rate, band_gain, band_count);
 		float y0 = SNDEQ_DbToY (db0);
 		float y1 = SNDEQ_DbToY (db1);
 		float zero = SNDEQ_DbToY (0.0f);
@@ -262,7 +358,7 @@ void SNDEQ_DrawDialog (void)
 		QR_GUI_CanvasLine ((float)i, y0, (float)(i + 2), y1, SNDEQ_Color (250, 210, 90, 230), 2.0f);
 	}
 
-	for (i = 0; i < SNDEQ_BandCount (); i++)
+	for (i = 0; i < band_count; i++)
 	{
 		char  label[32];
 		int   hot = (eq_drag_band == i || (fabsf (mouse_x - hx[i]) < 14.0f && fabsf (mouse_y - hy[i]) < 14.0f)) ? 1 : 0;
@@ -272,24 +368,72 @@ void SNDEQ_DrawDialog (void)
 		QR_GUI_CanvasCircle (hx[i], hy[i], radius, SNDEQ_Color (28, 32, 40, 255), 0.0f, 1);
 		QR_GUI_CanvasCircle (hx[i], hy[i], radius, SNDEQ_Color (250, 210, 90, 255), hot ? 2.5f : 2.0f, 0);
 
-		q_snprintf (label, sizeof (label), "%+.1f", SNDEQ_BandCvar (i)->value);
+		q_snprintf (label, sizeof (label), "%+.1f", band_gain[i]);
 		QR_GUI_CanvasText (hx[i] + radius + 4.0f, hy[i] - 8.0f, SNDEQ_Color (240, 230, 200, 230), label);
 	}
 
 	QR_GUI_Spacing ();
 
 	if (QR_GUI_Button ("Reset"))
-		SNDEQ_ResetBands ();
+	{
+		eq_pending.reset = true;
+		eq_pending.gain_mask = 0;
+		for (i = 0; i < band_count; i++)
+			band_gain[i] = 0.0f;
+	}
 	QR_GUI_SameLine ();
 	if (QR_GUI_Button ("Close"))
-		SNDEQ_SetDialogOpen (false);
+		eq_pending.close = true;
 	QR_GUI_SameLine ();
-	QR_GUI_LabelDim (SNDEQ_Active () ? "EQ active" : "flat");
+	for (i = 0; i < band_count; i++)
+	{
+		if (fabsf (band_gain[i]) > 0.001f)
+		{
+			eq_active = true;
+			break;
+		}
+	}
+	QR_GUI_LabelDim (eq_active ? "EQ active" : "flat");
 	QR_GUI_LabelRight ("Drag: gain | Ctrl+Click: reset band | Esc: close");
 
 	QR_GUI_EndDialog ();
 	QR_GUI_PopWindowPadding ();
-	SDL_UnlockMutex (snd_mutex);
+}
+
+void SNDEQ_DrainActions (void)
+{
+	sndeq_pending_t pending;
+	int             i, band_count;
+
+	if (Tasks_IsWorker ())
+		return;
+
+	pending = eq_pending;
+	memset (&eq_pending, 0, sizeof (eq_pending));
+
+	band_count = SNDEQ_BandCount ();
+	if (band_count > SNDEQ_BANDS)
+		band_count = SNDEQ_BANDS;
+
+	if (pending.reset)
+		SNDEQ_ResetBands ();
+
+	if (pending.gain_mask != 0)
+	{
+		for (i = 0; i < band_count; i++)
+		{
+			if (pending.gain_mask & (1u << i))
+			{
+				cvar_t *cv = SNDEQ_BandCvar (i);
+				if (cv)
+					Cvar_SetValueQuick (cv, pending.gain[i]);
+			}
+		}
+		SNDEQ_RequestRebuild ();
+	}
+
+	if (pending.close)
+		SNDEQ_SetDialogOpen (false);
 }
 
 qboolean SNDEQ_GuiProcessEvent (const void *sdl_event)

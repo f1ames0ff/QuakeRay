@@ -684,6 +684,7 @@ void Host_ClearMemory (void)
 	}
 
 	Con_DPrintf ("Clearing memory\n");
+	QR_Editor_OnNewMap ();
 	Mod_ClearAll ();
 	Sky_ClearAll ();
 	if (!isDedicated)
@@ -1193,6 +1194,10 @@ void Host_Shutdown (void)
 
 	// keep Con_Printf from trying to update the screen
 	scr_disabled_for_loading = true;
+
+	// drain any in-flight render task before tearing down editor/ImGui/GPU state
+	if (!isDedicated && cls.state != ca_dedicated)
+		GL_SynchronizeEndRenderingTask ();
 
 	QR_Editor_Shutdown (); // releases the ImGui context and the font material
 

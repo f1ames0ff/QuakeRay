@@ -93,6 +93,7 @@ void CL_ClearTrailStates (void)
 void CL_FreeState (void)
 {
 	int i;
+	QR_Editor_OnNewMap ();
 	for (i = 0; i < MAX_CL_STATS; i++)
 		Mem_Free (cl.statss[i]);
 	PR_ClearProgs (&cl.qcvm);
@@ -121,6 +122,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	QR_Editor_OnNewMap ();
 	if (!sv.active)
 		Host_ClearMemory ();
 
@@ -168,6 +170,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	QR_Editor_OnNewMap ();
 	if (key_dest == key_message)
 		Key_EndChat (); // don't get stuck in chat mode
 

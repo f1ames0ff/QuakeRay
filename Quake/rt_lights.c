@@ -8,6 +8,7 @@
 #include "quakedef.h"
 #include "rt_material.h"
 #include "rt_lights.h"
+#include "rt_pkz.h"
 #include "atomics.h"
 #include "qr_editor.h"
 
@@ -611,13 +612,43 @@ static qboolean rt_light_parse_bool(const char *value)
 
 static int RT_CustomStyleFromString(const char *s);
 
+static qboolean rt_light_is_emitter_section_header(const char *p)
+{
+    const char *colon = strchr(p, ':');
+    char        key[64];
+    size_t      len;
+
+    if (!colon)
+    {
+        return false;
+    }
+    len = (size_t)(colon - p);
+    if (len >= sizeof(key))
+    {
+        return false;
+    }
+    memcpy(key, p, len);
+    key[len] = '\0';
+    rt_light_trim(key, sizeof(key));
+    return (!q_strcasecmp(key, "qray_lights") || !q_strcasecmp(key, "lights")) ? true : false;
+}
+
 static int rt_light_parse_text(const char *text, int length)
 {
     const char *cursor = text;
     const char *end = text + length;
     char        line[1024];
     rt_light_t *cur = NULL;
+    qboolean    in_emitters = true;
     int         loaded = 0;
+
+    if (length >= 3 &&
+        (unsigned char)text[0] == 0xEF &&
+        (unsigned char)text[1] == 0xBB &&
+        (unsigned char)text[2] == 0xBF)
+    {
+        cursor += 3;
+    }
 
     while (cursor < end)
     {
@@ -632,14 +663,46 @@ static int rt_light_parse_text(const char *text, int length)
         line[n] = '\0';
         cursor = nl ? nl + 1 : end;
 
-        char *p = line;
-        char *colon;
+        const qboolean at_col0 = (line[0] != ' ' && line[0] != '\t');
+        char          *p = line;
+        char          *colon;
 
         while (*p == ' ' || *p == '\t')
         {
             p++;
         }
         if (*p == '#' || *p == '\0' || *p == '\r' || *p == '\n')
+        {
+            continue;
+        }
+
+        if (at_col0)
+        {
+            if (!strncmp(p, "- name:", 7) || !strncmp(p, "name:", 5))
+            {
+                in_emitters = true;
+            }
+            else if (!strncmp(p, "---", 3) || !strncmp(p, "...", 3))
+            {
+                cur = NULL;
+                in_emitters = true;
+                continue;
+            }
+            else if (rt_light_is_emitter_section_header(p))
+            {
+                in_emitters = true;
+                cur = NULL;
+                continue;
+            }
+            else
+            {
+                in_emitters = false;
+                cur = NULL;
+                continue;
+            }
+        }
+
+        if (!in_emitters)
         {
             continue;
         }
@@ -819,21 +882,155 @@ static int rt_light_load_file(const char *path)
     return loaded;
 }
 
-static int rt_light_load_vfs(const char *name)
+// Collects com_searchpaths into lowest-to-highest precedence order: tail-to-head
+// across roots/mods, with each directory's pak/pkz archives ordered before its
+// loose directory so loose overrides win over shipped archives in the same root.
+static searchpath_t **rt_light_build_searchpath_order(int *outCount)
 {
-    int   length = 0;
-    byte *buf = COM_LoadFile(name, NULL);
-    int   loaded;
+    searchpath_t  *s;
+    searchpath_t **rev;
+    searchpath_t **prec;
+    int            total = 0;
+    int            idx = 0;
+    int            i = 0;
+    int            out = 0;
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        total++;
+    }
+    if (total == 0)
+    {
+        *outCount = 0;
+        return NULL;
+    }
+
+    rev = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*rev));
+    prec = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*prec));
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        rev[total - 1 - idx++] = s;
+    }
+
+    while (i < total)
+    {
+        if (!rev[i]->pack && !rev[i]->rt_pkz)
+        {
+            int j = i + 1;
+            int k;
+
+            while (j < total && (rev[j]->pack || rev[j]->rt_pkz))
+            {
+                j++;
+            }
+            for (k = i + 1; k < j; k++)
+            {
+                prec[out++] = rev[k];
+            }
+            prec[out++] = rev[i];
+            i = j;
+        }
+        else
+        {
+            prec[out++] = rev[i++];
+        }
+    }
+
+    Mem_Free(rev);
+    *outCount = out;
+    return prec;
+}
+
+static char *rt_light_read_pack_file(const pack_t *pak, const char *filename, int *outLen)
+{
+    int i;
+
+    if (!pak || !filename || !filename[0])
+    {
+        return NULL;
+    }
+
+    for (i = 0; i < pak->numfiles; i++)
+    {
+        FILE  *f;
+        char  *buf;
+        size_t got;
+        int    filelen;
+
+        if (q_strcasecmp(pak->files[i].name, filename) != 0)
+        {
+            continue;
+        }
+        filelen = pak->files[i].filelen;
+        if (filelen <= 0 || filelen > 8 * 1024 * 1024)
+        {
+            return NULL;
+        }
+        f = fopen(pak->filename, "rb");
+        if (!f)
+        {
+            return NULL;
+        }
+        if (fseek(f, pak->files[i].filepos, SEEK_SET) != 0)
+        {
+            fclose(f);
+            return NULL;
+        }
+        buf = (char *)Mem_Alloc((size_t)filelen + 1);
+        got = fread(buf, 1, (size_t)filelen, f);
+        fclose(f);
+        buf[got] = '\0';
+        if (outLen)
+        {
+            *outLen = (int)got;
+        }
+        return buf;
+    }
+
+    return NULL;
+}
+
+static void rt_light_load_pkz(const void *archive, const char *filename)
+{
+    int   len = 0;
+    byte *buf = RT_PKZ_LoadFile(archive, filename, &len);
 
     if (!buf)
     {
-        return 0;
+        return;
     }
 
-    length = com_filesize;
-    loaded = rt_light_parse_text((const char *)buf, length);
+    if (len > 0)
+    {
+        int loaded = rt_light_parse_text((const char *)buf, len);
+        if (loaded > 0)
+        {
+            Con_Printf("RT: loaded %d light overrides from %s\n", loaded, filename);
+        }
+    }
     Mem_Free(buf);
-    return loaded;
+}
+
+static void rt_light_load_pack(const pack_t *pak, const char *filename)
+{
+    int   len = 0;
+    char *buf = rt_light_read_pack_file(pak, filename, &len);
+
+    if (!buf)
+    {
+        return;
+    }
+
+    if (len > 0)
+    {
+        int loaded = rt_light_parse_text(buf, len);
+        if (loaded > 0)
+        {
+            Con_Printf("RT: loaded %d light overrides from %s\n", loaded, filename);
+        }
+    }
+    Mem_Free(buf);
 }
 
 static void rt_light_load_file_if_present(const char *path)
@@ -862,7 +1059,9 @@ static void rt_light_load_directory(const char *dir)
 
 void RT_LIGHT_Reload(void)
 {
-    int i;
+    searchpath_t **prec;
+    int            count = 0;
+    int            i;
 
     if (!rt_light_initialized)
     {
@@ -871,20 +1070,35 @@ void RT_LIGHT_Reload(void)
 
     rt_light_count = 0;
 
-    for (i = 0; i < com_numbasedirs; i++)
+    prec = rt_light_build_searchpath_order(&count);
+    for (i = 0; i < count; i++)
     {
-        char base[MAX_OSPATH];
+        searchpath_t *s = prec[i];
 
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
-        if (!COM_PathMatches(base, com_gamedir))
+        if (s->rt_pkz)
         {
-            rt_light_load_directory(base);
+            rt_light_load_pkz(s->rt_pkz, "lights.yaml");
+            rt_light_load_pkz(s->rt_pkz, "qray.lights.yaml");
+        }
+        else if (s->pack)
+        {
+            rt_light_load_pack(s->pack, "lights.yaml");
+            rt_light_load_pack(s->pack, "qray.lights.yaml");
+        }
+        else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+        {
+            rt_light_load_directory(s->filename);
         }
     }
-    rt_light_load_directory(com_gamedir);
+    if (prec)
+    {
+        Mem_Free(prec);
+    }
 
-    rt_light_load_vfs("lights.yaml");
-    rt_light_load_vfs("qray.lights.yaml");
+    if (com_gamedir[0])
+    {
+        rt_light_load_directory(com_gamedir);
+    }
 }
 
 void RT_LIGHT_Init(void)
@@ -905,9 +1119,11 @@ void RT_LIGHT_Shutdown(void)
 
 int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
 {
-    FILE *f = fopen(path, "r");
-    char  line[1024];
-    int   count = 0;
+    FILE    *f = fopen(path, "r");
+    char     line[1024];
+    qboolean in_emitters = true;
+    qboolean first_line = true;
+    int      count = 0;
 
     if (!f)
     {
@@ -916,15 +1132,57 @@ int RT_LIGHT_ReadNames(const char *path, char (*names)[MAX_QPATH], int max)
 
     while (count < max && fgets(line, sizeof(line), f))
     {
-        char *p = line;
-        char  name[MAX_QPATH];
-        int   i, dup = 0;
+        char    *start = line;
+        char    *p;
+        char     name[MAX_QPATH];
+        qboolean at_col0;
+        int      i, dup = 0;
+
+        if (first_line)
+        {
+            first_line = false;
+            if ((unsigned char)start[0] == 0xEF &&
+                (unsigned char)start[1] == 0xBB &&
+                (unsigned char)start[2] == 0xBF)
+            {
+                start += 3;
+            }
+        }
+
+        at_col0 = (start[0] != ' ' && start[0] != '\t');
+        p = start;
 
         while (*p == ' ' || *p == '\t')
         {
             p++;
         }
-        if (*p == '#' || !strncmp(p, "qray_lights:", 12) || !strncmp(p, "lights:", 7))
+        if (*p == '#' || *p == '\0' || *p == '\r' || *p == '\n')
+        {
+            continue;
+        }
+        if (at_col0)
+        {
+            if (!strncmp(p, "- name:", 7) || !strncmp(p, "name:", 5))
+            {
+                in_emitters = true;
+            }
+            else if (!strncmp(p, "---", 3) || !strncmp(p, "...", 3))
+            {
+                in_emitters = true;
+                continue;
+            }
+            else if (rt_light_is_emitter_section_header(p))
+            {
+                in_emitters = true;
+                continue;
+            }
+            else
+            {
+                in_emitters = false;
+                continue;
+            }
+        }
+        if (!in_emitters)
         {
             continue;
         }
@@ -1055,7 +1313,7 @@ void RT_CustomLights_ApplyFog(void)
        use, and it runs on the next command-buffer pump, after the worldspawn
        keys have been parsed, so the file's fog wins over the map's own. */
     if (rt_custom_fog.has_enabled)
-        Cvar_Set("fog_enabled", rt_custom_fog.enabled ? "1" : "0");
+        Cvar_SetROM("fog_enabled", rt_custom_fog.enabled ? "1" : "0");
 
     Cbuf_AddText(va("fog %f %f %f %f\n", rt_custom_fog.density,
                     CLAMP(0.0f, rt_custom_fog.color[0], 1.0f),
@@ -1312,13 +1570,23 @@ static int  rt_sky_parsed_count;
 static int  rt_sky_parsed_index[RT_SKY_COUNT];
 static char rt_sky_parsed_value[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 
-// The editor session's snapshot of the state above.
+// The editor session's snapshot of the state above (disk baseline, restored on
+// Exit without Save).
 static char     rt_sky_session_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 static char     rt_sky_session_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
 static qboolean rt_sky_session_set[RT_SKY_COUNT];
 static qboolean rt_sky_session_globals_ready;
 static qboolean rt_sky_session_level_mode;
 static qboolean rt_sky_session_block;
+
+// The editor session's Cancel checkpoint (updated on Apply, leaving the disk
+// baseline above intact).
+static char     rt_sky_checkpoint_globals[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static char     rt_sky_checkpoint_values[RT_SKY_COUNT][RT_SKY_VALUE_MAX];
+static qboolean rt_sky_checkpoint_set[RT_SKY_COUNT];
+static qboolean rt_sky_checkpoint_globals_ready;
+static qboolean rt_sky_checkpoint_level_mode;
+static qboolean rt_sky_checkpoint_block;
 
 static int RT_SkySettings_Index(const char *name)
 {
@@ -1475,6 +1743,19 @@ void RT_SkySettings_SetScope(qboolean level)
     RT_SkySettings_ApplyScope();
 }
 
+void RT_SkySettings_SetScopeNoCapture(qboolean level)
+{
+    if (!rt_sky_globals_ready)
+        RT_SkySettings_CaptureGlobals();
+    rt_sky_level_mode = level;
+    RT_SkySettings_ApplyScope();
+}
+
+qboolean RT_SkySettings_IsLevelScope(void)
+{
+    return rt_sky_level_mode;
+}
+
 // Whether this session changed the sky settings or their scope at all.
 qboolean RT_SkySettings_SessionDirty(void)
 {
@@ -1522,6 +1803,23 @@ int RT_SkySettings_WriteLevel(FILE *f)
     return written;
 }
 
+static void RT_SkySettings_SaveCheckpointState(void)
+{
+    int i;
+
+    rt_sky_checkpoint_globals_ready = rt_sky_globals_ready;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        q_strlcpy(rt_sky_checkpoint_globals[i], rt_sky_globals[i], RT_SKY_VALUE_MAX);
+        q_strlcpy(rt_sky_checkpoint_values[i], rt_sky_level_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_checkpoint_set[i] = rt_sky_level_set[i];
+    }
+
+    rt_sky_checkpoint_block = rt_sky_level_block;
+    rt_sky_checkpoint_level_mode = rt_sky_level_mode;
+}
+
 void RT_SkySettings_BeginSession(void)
 {
     int i;
@@ -1537,7 +1835,40 @@ void RT_SkySettings_BeginSession(void)
 
     rt_sky_session_block = rt_sky_level_block;
     rt_sky_session_level_mode = rt_sky_level_mode;
+    RT_SkySettings_SaveCheckpointState();
     rt_sky_session_active = true;
+}
+
+void RT_SkySettings_CheckpointSession(void)
+{
+    if (!rt_sky_session_active)
+        return;
+
+    RT_SkySettings_CaptureScope();
+    RT_SkySettings_SaveCheckpointState();
+}
+
+void RT_SkySettings_RestoreCheckpoint(void)
+{
+    int i;
+
+    if (!rt_sky_session_active)
+        return;
+
+    rt_sky_globals_ready = rt_sky_checkpoint_globals_ready;
+
+    for (i = 0; i < RT_SKY_COUNT; i++)
+    {
+        q_strlcpy(rt_sky_globals[i], rt_sky_checkpoint_globals[i], RT_SKY_VALUE_MAX);
+        q_strlcpy(rt_sky_level_values[i], rt_sky_checkpoint_values[i], RT_SKY_VALUE_MAX);
+        rt_sky_level_set[i] = rt_sky_checkpoint_set[i];
+    }
+
+    rt_sky_level_block = rt_sky_checkpoint_block;
+    rt_sky_level_mode = rt_sky_checkpoint_level_mode;
+
+    if (rt_sky_globals_ready)
+        RT_SkySettings_ApplyScope();
 }
 
 // Discard, or an editor closed without saving: the snapshot comes back, and the
@@ -1756,6 +2087,15 @@ static void RT_CustomLightsParse(const char *filebuf, int len, const char *level
     yaml_parser_delete(&parser);
 }
 
+static qboolean rt_custom_load_text(const char *text, int len, const char *level)
+{
+    if (!text || len <= 0)
+        return false;
+
+    RT_CustomLightsParse(text, len, level);
+    return (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0) ? true : false;
+}
+
 static qboolean rt_custom_load_stream(FILE *f, const char *level)
 {
     long     size;
@@ -1777,10 +2117,8 @@ static qboolean rt_custom_load_stream(FILE *f, const char *level)
     got = fread(text, 1, (size_t)size, f);
     text[got] = 0;
 
-    RT_CustomLightsParse(text, (int)got, level);
+    found = rt_custom_load_text(text, (int)got, level);
     Mem_Free(text);
-
-    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0) ? true : false;
     return found;
 }
 
@@ -1797,52 +2135,112 @@ static qboolean rt_custom_load_file(const char *path, const char *level)
     return found;
 }
 
-static qboolean rt_custom_load_vfs(const char *name, const char *level)
+static qboolean rt_custom_load_dir(const char *dir, const char *level)
 {
-    int       length = 0;
-    byte     *buf = COM_LoadFile(name, NULL);
-    qboolean  found;
+    char path[MAX_OSPATH];
+
+    if (!dir || !dir[0])
+        return false;
+
+    q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", dir);
+    if (rt_custom_load_file(path, level))
+        return true;
+
+    q_snprintf(path, sizeof(path), "%s/qray/lights.yaml", dir);
+    return rt_custom_load_file(path, level);
+}
+
+static qboolean rt_custom_load_pkz(const void *archive, const char *name, const char *level)
+{
+    int      len = 0;
+    byte    *buf = RT_PKZ_LoadFile(archive, name, &len);
+    qboolean found;
 
     if (!buf)
         return false;
 
-    length = com_filesize;
-    RT_CustomLightsParse((const char *)buf, length, level);
+    found = rt_custom_load_text((const char *)buf, len, level);
     Mem_Free(buf);
+    return found;
+}
 
-    found = (rt_custom_light_count > 0 || rt_custom_fog.has_fog || rt_sky_parsed_count > 0) ? true : false;
+static qboolean rt_custom_load_pack(const pack_t *pak, const char *name, const char *level)
+{
+    int      len = 0;
+    char    *buf = rt_light_read_pack_file(pak, name, &len);
+    qboolean found;
+
+    if (!buf)
+        return false;
+
+    found = rt_custom_load_text(buf, len, level);
+    Mem_Free(buf);
     return found;
 }
 
 void RT_CustomLights_ChangeMap(const char *mapname)
 {
-    char level[64];
-    char path[MAX_OSPATH];
+    char           level[64];
+    qboolean       found = false;
+    searchpath_t **prec;
+    int            count = 0;
+    int            i;
 
     rt_custom_light_count = 0;
     RT_CustomFogSet(NULL);
     rt_custom_fog_applied = false;
     rt_sky_parsed_count = 0;
 
-    if (!mapname || !mapname[0] || !com_gamedir[0])
+    if (!mapname || !mapname[0] || (!com_gamedir[0] && !com_searchpaths))
     {
         RT_SkySettings_ApplyParsed();
         return;
     }
 
     RT_CustomLights_LevelKey(mapname, level, sizeof(level));
-    q_snprintf(path, sizeof(path), "%s/qray.lights.yaml", com_gamedir);
 
-    // the merged file first; a level the migration has not reached yet still
-    // lives in the old qray/lights.yaml
-    if (!rt_custom_load_file(path, level))
+    // Highest-to-lowest precedence: active com_gamedir loose files first, then
+    // remaining search paths (mods, roots, pak and pkz archives) until a section
+    // for this level is actually found.
+    if (com_gamedir[0])
     {
-        q_snprintf(path, sizeof(path), "%s/qray/lights.yaml", com_gamedir);
-        if (!rt_custom_load_file(path, level))
+        found = rt_custom_load_dir(com_gamedir, level);
+    }
+
+    if (!found)
+    {
+        prec = rt_light_build_searchpath_order(&count);
+        for (i = count - 1; i >= 0 && !found; i--)
         {
-            // a store-mounted mod's own file, found through the search path
-            if (!rt_custom_load_vfs("qray.lights.yaml", level))
-                rt_custom_load_vfs("qray/lights.yaml", level);
+            searchpath_t *s = prec[i];
+
+            if (s->rt_pkz)
+            {
+                if (rt_custom_load_pkz(s->rt_pkz, "qray.lights.yaml", level) ||
+                    rt_custom_load_pkz(s->rt_pkz, "qray/lights.yaml", level))
+                {
+                    found = true;
+                }
+            }
+            else if (s->pack)
+            {
+                if (rt_custom_load_pack(s->pack, "qray.lights.yaml", level) ||
+                    rt_custom_load_pack(s->pack, "qray/lights.yaml", level))
+                {
+                    found = true;
+                }
+            }
+            else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+            {
+                if (rt_custom_load_dir(s->filename, level))
+                {
+                    found = true;
+                }
+            }
+        }
+        if (prec)
+        {
+            Mem_Free(prec);
         }
     }
 

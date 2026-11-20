@@ -223,7 +223,10 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         while (*src == '/' || *src == '\\')
             src++;
         while (*src && dst < norm + sizeof (norm) - 1)
-            *dst++ = (*src == '\\') ? '/' : *src++;
+        {
+            const char c = *src++;
+            *dst++ = (c == '\\') ? '/' : c;
+        }
         *dst = '\0';
     }
     base = norm;
@@ -965,18 +968,27 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
     return count;
 }
 
-static int rt_mat_load_yaml_file(const char *file_name, rt_material_t *dest, int max_items)
+static qboolean rt_mat_is_editor_temp_name(const char *path)
 {
-    int   len = 0;
-    char *filebuf = (char *)rt_load_file(file_name, &len);
-    int   count;
+    const char *base;
+    const char *slash;
+    const char *bslash;
 
-    if (!filebuf)
-        return 0;
+    if (!path)
+        return false;
 
-    count = rt_mat_parse_yaml(filebuf, len, file_name, dest, max_items);
-    rt_load_file_free((byte *)filebuf);
-    return count;
+    slash = strrchr(path, '/');
+    bslash = strrchr(path, '\\');
+    base = path;
+    if (slash && slash + 1 > base)
+        base = slash + 1;
+    if (bslash && bslash + 1 > base)
+        base = bslash + 1;
+
+    return (!q_strcasecmp(base, "materials.editor.yaml") ||
+            !q_strcasecmp(base, "backup_materials.yaml") ||
+            !q_strcasecmp(base, "qray.materials.editor.yaml") ||
+            !q_strcasecmp(base, "qray.backup_materials.yaml")) ? true : false;
 }
 
 static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_items)
@@ -1009,13 +1021,6 @@ static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_i
     return count;
 }
 
-static int rt_mat_load_any(const char *name, rt_material_t *dest, int max_items)
-{
-    if (name[0] && (name[1] == ':' || name[0] == '/' || name[0] == '\\'))
-        return rt_mat_load_abs_file(name, dest, max_items);
-    return rt_mat_load_yaml_file(name, dest, max_items);
-}
-
 static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *ctx), void *ctx)
 {
 	char pattern[MAX_OSPATH];
@@ -1038,10 +1043,7 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
 			}
 			// the editor's own files: the session file is not a materials file
 			// until it is saved, and the backup never is
-			if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-			    !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
-			    !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
-			    !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
+			if (rt_mat_is_editor_temp_name(fd.cFileName))
 			{
 				continue;
 			}
@@ -1070,10 +1072,7 @@ static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *c
 			{
 				continue;
 			}
-			if (!q_strcasecmp(e->d_name, "materials.editor.yaml") ||
-			    !q_strcasecmp(e->d_name, "backup_materials.yaml") ||
-			    !q_strcasecmp(e->d_name, "qray.materials.editor.yaml") ||
-			    !q_strcasecmp(e->d_name, "qray.backup_materials.yaml"))
+			if (rt_mat_is_editor_temp_name(e->d_name))
 			{
 				continue;
 			}
@@ -1106,25 +1105,16 @@ typedef struct {
 	int max;
 } rt_mat_load_ctx_t;
 
-static int rt_mat_load_cb(const char *name, void *vctx)
+static void rt_mat_merge_loaded(rt_mat_load_ctx_t *ctx, int before, int loaded, const char *label)
 {
-    rt_mat_load_ctx_t *ctx = (rt_mat_load_ctx_t *)vctx;
-    const int before = *ctx->count;
-    int loaded, n, kept = 0;
-
-    if (before >= ctx->max)
-    {
-        return 1;
-    }
-
-    loaded = rt_mat_load_any(name, ctx->dest + before, ctx->max - before);
+    int n, kept = 0;
 
     for (n = 0; n < loaded; n++)
     {
         rt_material_t *loaded_mat = ctx->dest + before + n;
         int            old = -1, i;
 
-        for (i = 0; i < before; i++)
+        for (i = 0; i < before + kept; i++)
         {
             if (!q_strcasecmp(ctx->dest[i].name, loaded_mat->name))
             {
@@ -1139,31 +1129,294 @@ static int rt_mat_load_cb(const char *name, void *vctx)
         }
         else
         {
-            ctx->dest[before + kept++] = *loaded_mat;
+            if (kept != n)
+            {
+                ctx->dest[before + kept] = *loaded_mat;
+            }
+            kept++;
         }
     }
     *ctx->count = before + kept;
 
     if (loaded > 0)
     {
-        Con_Printf("RT: loaded %d materials from %s\n", loaded, name);
+        Con_Printf("RT: loaded %d materials from %s\n", loaded, label);
     }
+}
+
+static int rt_mat_load_buffer(const char *buf, int len, const char *label, rt_mat_load_ctx_t *ctx)
+{
+    const int before = *ctx->count;
+    int       loaded;
+
+    if (before >= ctx->max)
+    {
+        return 1;
+    }
+    if (!buf || len <= 0)
+    {
+        return 0;
+    }
+
+    loaded = rt_mat_parse_yaml(buf, len, label, ctx->dest + before, ctx->max - before);
+    rt_mat_merge_loaded(ctx, before, loaded, label);
+    return (*ctx->count >= ctx->max) ? 1 : 0;
+}
+
+static int rt_mat_load_cb(const char *name, void *vctx)
+{
+    rt_mat_load_ctx_t *ctx = (rt_mat_load_ctx_t *)vctx;
+    const int          before = *ctx->count;
+    int                loaded;
+
+    if (before >= ctx->max)
+    {
+        return 1;
+    }
+
+    loaded = rt_mat_load_abs_file(name, ctx->dest + before, ctx->max - before);
+    rt_mat_merge_loaded(ctx, before, loaded, name);
     return 0;
 }
 
-static void rt_mat_load_base_dirs(rt_mat_load_ctx_t *ctx)
+// Collects com_searchpaths into lowest-to-highest precedence order: tail-to-head
+// across roots/mods, with each directory's pak/pkz archives ordered before its
+// loose directory so loose overrides win over shipped archives in the same root.
+static searchpath_t **rt_mat_build_searchpath_order(int *outCount)
+{
+    searchpath_t  *s;
+    searchpath_t **rev;
+    searchpath_t **prec;
+    int            total = 0;
+    int            idx = 0;
+    int            i = 0;
+    int            out = 0;
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        total++;
+    }
+    if (total == 0)
+    {
+        *outCount = 0;
+        return NULL;
+    }
+
+    rev = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*rev));
+    prec = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*prec));
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        rev[total - 1 - idx++] = s;
+    }
+
+    while (i < total)
+    {
+        if (!rev[i]->pack && !rev[i]->rt_pkz)
+        {
+            int j = i + 1;
+            int k;
+
+            while (j < total && (rev[j]->pack || rev[j]->rt_pkz))
+            {
+                j++;
+            }
+            for (k = i + 1; k < j; k++)
+            {
+                prec[out++] = rev[k];
+            }
+            prec[out++] = rev[i];
+            i = j;
+        }
+        else
+        {
+            prec[out++] = rev[i++];
+        }
+    }
+
+    Mem_Free(rev);
+    *outCount = out;
+    return prec;
+}
+
+static char *rt_mat_read_pack_file(const pack_t *pak, const char *filename, int *outLen)
 {
     int i;
 
-    for (i = 0; i < com_numbasedirs; i++)
+    if (!pak || !filename || !filename[0])
     {
-        char base[MAX_OSPATH];
+        return NULL;
+    }
 
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
-        if (!COM_PathMatches(base, com_gamedir))
+    for (i = 0; i < pak->numfiles; i++)
+    {
+        FILE  *f;
+        char  *buf;
+        size_t got;
+        int    filelen;
+
+        if (q_strcasecmp(pak->files[i].name, filename) != 0)
         {
-            rt_mat_load_dir(base, rt_mat_load_cb, ctx);
+            continue;
         }
+        filelen = pak->files[i].filelen;
+        if (filelen <= 0 || filelen > 64 * 1024 * 1024)
+        {
+            return NULL;
+        }
+        f = fopen(pak->filename, "rb");
+        if (!f)
+        {
+            return NULL;
+        }
+        if (fseek(f, pak->files[i].filepos, SEEK_SET) != 0)
+        {
+            fclose(f);
+            return NULL;
+        }
+        buf = (char *)Mem_Alloc((size_t)filelen + 1);
+        got = fread(buf, 1, (size_t)filelen, f);
+        fclose(f);
+        buf[got] = '\0';
+        if (outLen)
+        {
+            *outLen = (int)got;
+        }
+        return buf;
+    }
+
+    return NULL;
+}
+
+typedef struct {
+    const void        *archive;
+    rt_mat_load_ctx_t *mat_ctx;
+} rt_mat_pkz_ctx_t;
+
+static int rt_mat_load_pkz_file(const void *archive, const char *filename, rt_mat_load_ctx_t *ctx)
+{
+    int   len = 0;
+    byte *buf;
+    int   stop;
+
+    if (*ctx->count >= ctx->max)
+    {
+        return 1;
+    }
+
+    buf = RT_PKZ_LoadFile(archive, filename, &len);
+    if (!buf)
+    {
+        return 0;
+    }
+
+    stop = rt_mat_load_buffer((const char *)buf, len, filename, ctx);
+    Mem_Free(buf);
+    return stop;
+}
+
+static int rt_mat_load_pkz_cb(const char *name, void *vctx)
+{
+    rt_mat_pkz_ctx_t *pctx = (rt_mat_pkz_ctx_t *)vctx;
+
+    if (rt_mat_is_editor_temp_name(name))
+    {
+        return 0;
+    }
+    return rt_mat_load_pkz_file(pctx->archive, name, pctx->mat_ctx);
+}
+
+static void rt_mat_load_pkz(const void *archive, rt_mat_load_ctx_t *ctx)
+{
+    rt_mat_pkz_ctx_t pctx = { archive, ctx };
+
+    RT_PKZ_ListArchiveFiles(archive, "materials/", ".yaml", rt_mat_load_pkz_cb, &pctx);
+    rt_mat_load_pkz_file(archive, "materials.yaml", ctx);
+    rt_mat_load_pkz_file(archive, "qray.materials.yaml", ctx);
+}
+
+static void rt_mat_load_pack_file(const pack_t *pak, const char *filename, rt_mat_load_ctx_t *ctx)
+{
+    int   len = 0;
+    char *buf;
+
+    if (*ctx->count >= ctx->max)
+    {
+        return;
+    }
+
+    buf = rt_mat_read_pack_file(pak, filename, &len);
+    if (!buf)
+    {
+        return;
+    }
+
+    rt_mat_load_buffer(buf, len, filename, ctx);
+    Mem_Free(buf);
+}
+
+static void rt_mat_load_pack(const pack_t *pak, rt_mat_load_ctx_t *ctx)
+{
+    int i;
+
+    if (!pak)
+    {
+        return;
+    }
+
+    for (i = 0; i < pak->numfiles && *ctx->count < ctx->max; i++)
+    {
+        const char *name = pak->files[i].name;
+        size_t      len = strlen(name);
+
+        if (len < 15 || q_strncasecmp(name, "materials/", 10) != 0 ||
+            q_strcasecmp(name + len - 5, ".yaml") != 0)
+        {
+            continue;
+        }
+        if (rt_mat_is_editor_temp_name(name))
+        {
+            continue;
+        }
+        rt_mat_load_pack_file(pak, name, ctx);
+    }
+
+    rt_mat_load_pack_file(pak, "materials.yaml", ctx);
+    rt_mat_load_pack_file(pak, "qray.materials.yaml", ctx);
+}
+
+static void rt_mat_load_global(rt_mat_load_ctx_t *ctx)
+{
+    searchpath_t **prec;
+    int            count = 0;
+    int            i;
+
+    prec = rt_mat_build_searchpath_order(&count);
+    for (i = 0; i < count && *ctx->count < ctx->max; i++)
+    {
+        searchpath_t *s = prec[i];
+
+        if (s->rt_pkz)
+        {
+            rt_mat_load_pkz(s->rt_pkz, ctx);
+        }
+        else if (s->pack)
+        {
+            rt_mat_load_pack(s->pack, ctx);
+        }
+        else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+        {
+            rt_mat_load_dir(s->filename, rt_mat_load_cb, ctx);
+        }
+    }
+    if (prec)
+    {
+        Mem_Free(prec);
+    }
+
+    if (com_gamedir[0])
+    {
+        rt_mat_load_dir(com_gamedir, rt_mat_load_cb, ctx);
     }
 }
 
@@ -1182,13 +1435,7 @@ void RT_MAT_Init(void)
     rt_map_count = 0;
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
-
-    RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    rt_mat_load_base_dirs(&ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
-
-    rt_mat_load_cb("materials.yaml", &ctx);
-    rt_mat_load_cb("qray.materials.yaml", &ctx);
+    rt_mat_load_global(&ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
 }
@@ -1213,21 +1460,65 @@ void RT_MAT_Shutdown(void)
 
 void RT_MAT_ChangeMap(const char *mapname)
 {
+    rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
+
     if (!rt_initialized)
     {
         return;
     }
 
     q_strlcpy(rt_current_map, mapname ? mapname : "", sizeof(rt_current_map));
-
     rt_map_count = 0;
 
-    char name[MAX_QPATH];
-    q_snprintf(name, sizeof(name), "materials/%s.yaml", mapname);
+    if (mapname && mapname[0])
+    {
+        char           rel[MAX_QPATH];
+        searchpath_t **prec;
+        int            count = 0;
+        int            i;
 
-    rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
-    rt_mat_load_cb(name, &ctx);
+        q_snprintf(rel, sizeof(rel), "materials/%s.yaml", mapname);
 
+        prec = rt_mat_build_searchpath_order(&count);
+        for (i = 0; i < count && *ctx.count < ctx.max; i++)
+        {
+            searchpath_t *s = prec[i];
+
+            if (s->rt_pkz)
+            {
+                rt_mat_load_pkz_file(s->rt_pkz, rel, &ctx);
+            }
+            else if (s->pack)
+            {
+                rt_mat_load_pack_file(s->pack, rel, &ctx);
+            }
+            else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+            {
+                char path[MAX_OSPATH];
+                q_snprintf(path, sizeof(path), "%s/%s", s->filename, rel);
+                if (Sys_FileTime(path) != -1)
+                {
+                    rt_mat_load_cb(path, &ctx);
+                }
+            }
+        }
+        if (prec)
+        {
+            Mem_Free(prec);
+        }
+
+        if (com_gamedir[0])
+        {
+            char ownmap[MAX_OSPATH];
+            q_snprintf(ownmap, sizeof(ownmap), "%s/%s", com_gamedir, rel);
+            if (Sys_FileTime(ownmap) != -1)
+            {
+                rt_mat_load_cb(ownmap, &ctx);
+            }
+        }
+    }
+
+    if (com_gamedir[0])
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);
@@ -1254,11 +1545,7 @@ void RT_MAT_Reload(void)
     rt_map_count = 0;
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
-    RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    rt_mat_load_base_dirs(&ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
-    rt_mat_load_cb("materials.yaml", &ctx);
-    rt_mat_load_cb("qray.materials.yaml", &ctx);
+    rt_mat_load_global(&ctx);
 
     if (rt_current_map[0])
     {

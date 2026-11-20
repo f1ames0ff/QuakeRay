@@ -55,6 +55,7 @@ qboolean SNDEQ_DialogActive (void);
 void     SNDEQ_OpenDialog (void);
 void     SNDEQ_CloseDialog (void);
 void     SNDEQ_DrawDialog (void);
+void     SNDEQ_DrainActions (void);
 qboolean SNDEQ_GuiProcessEvent (const void *sdl_event);
 
 #endif /* __SND_EQ__ */

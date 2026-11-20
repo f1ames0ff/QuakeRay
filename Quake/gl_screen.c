@@ -1207,10 +1207,13 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
 		task_handle_t acquire_rendering_task = Task_AllocateAndAssignFunc (GL_AcquireRenderingTask, NULL, 0);
 		Task_AddDependency (begin_rendering_task, acquire_rendering_task);
-		// the editor's queued host actions land and its dirty materials are
-		// re-synthesized before the marking below reads the static-submit
-		// flag (R_MarkSurfaces) and the frame's tasks read the host state
+		// the equalizer and editor's queued host actions land and dirty
+		// materials are re-synthesized on the main thread before marking reads
+		// the static-submit flag (R_MarkSurfaces) and before the frame's tasks
+		// read host state; SDL2 ImGui platform work also runs here before submit
+		SNDEQ_DrainActions ();
 		QR_Editor_FlushDirty ();
+		QR_GUI_PrepareMainThreadFrame ((float) host_frametime);
 		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
 		task_handle_t end_rendering_task = GL_EndRendering (end_rendering_context);

@@ -1633,7 +1633,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	byte *normal = (byte *)Mem_Alloc (npix * 4);
 	byte *rasterAlbedo = overlayBuf && mat->material_glass ? (byte *)Mem_Alloc (npix * 4) : NULL;
 
-	const float baseFactor = (mat->base_factor > 0.0f) ? mat->base_factor : 1.0f;
+	const float baseFactor = (mat->base_factor >= 0.0f) ? mat->base_factor : 1.0f;
 	const float roughOverride = mat->roughness_override;
 
 	/* The transparency of a glass material rides the alpha of the synthesized
@@ -1977,6 +1977,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (colorEmis)  Mem_Free (colorEmis);
 	if (colorBlend) Mem_Free (colorBlend);
 	if (colorDist)  Mem_Free (colorDist);
+	if (colorRaw)   Mem_Free (colorRaw);
 
 	if (baseBuf) Mem_Free (baseBuf);
 	if (normBuf) Mem_Free (normBuf);
@@ -2825,9 +2826,13 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 {
 	byte *src = NULL, *allocated = NULL, *out;
 	int   npix, i;
+	int   width, height;
 
 	if (!glt)
 		return NULL;
+
+	width = (int)glt->source_width;
+	height = (int)glt->source_height;
 
 	if (glt->source_file[0] && glt->source_offset)
 	{
@@ -2846,7 +2851,7 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 			fclose (f);
 			return NULL;
 		}
-		size = glt->source_width * glt->source_height;
+		size = width * height;
 		if (glt->source_format == SRC_RGBA)
 			size *= 4;
 		else if (glt->source_format == SRC_LIGHTMAP)
@@ -2867,21 +2872,21 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	}
 	else if (glt->source_file[0] && !glt->source_offset)
 	{
-		allocated = src = Image_LoadImage (glt->source_file, (int *)&glt->source_width, (int *)&glt->source_height);
+		allocated = src = Image_LoadImage (glt->source_file, &width, &height);
 	}
 	else if (!glt->source_file[0] && glt->source_offset)
 	{
 		src = (byte *)glt->source_offset;
 	}
 
-	if (!src || glt->source_width <= 0 || glt->source_height <= 0)
+	if (!src || width <= 0 || height <= 0)
 	{
 		if (allocated)
 			Mem_Free (allocated);
 		return NULL;
 	}
 
-	npix = glt->source_width * glt->source_height;
+	npix = width * height;
 	out = (byte *)Mem_Alloc (npix * 4);
 
 	switch (glt->source_format)
@@ -2912,9 +2917,9 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	if (out)
 	{
 		if (outWidth)
-			*outWidth = glt->source_width;
+			*outWidth = width;
 		if (outHeight)
-			*outHeight = glt->source_height;
+			*outHeight = height;
 	}
 	return out;
 }

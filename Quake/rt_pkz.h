@@ -10,10 +10,13 @@ void RT_PKZ_Shutdown(void);
 
 int RT_PKZ_ListFiles(const char *dir, const char *ext,
                      int (*cb)(const char *name, void *ctx), void *ctx);
+int RT_PKZ_ListArchiveFiles(const void *archive, const char *dir, const char *ext,
+                            int (*cb)(const char *name, void *ctx), void *ctx);
 
 int RT_PKZ_FindFile(const void *archive, const char *name, int *outSize);
 
 int RT_PKZ_OpenFile(const void *archive, const char *name, int *outSize);
+byte *RT_PKZ_LoadFile(const void *archive, const char *name, int *outSize);
 
 FILE *RT_PKZ_OpenFileAsFILE(const void *archive, const char *name);
 

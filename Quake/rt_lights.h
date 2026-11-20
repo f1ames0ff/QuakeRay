@@ -262,6 +262,11 @@ qboolean RT_SkySettings_LevelHasBlock (void);
 // The editor's Global settings checkbox: swapping the scope takes the live
 // values into the set they were edited in and puts the other set on screen.
 void RT_SkySettings_SetScope (qboolean level);
+// Swaps the active scope and applies its stored values without capturing the
+// current live cvars into the previous scope first (used on Cancel/Reset).
+void RT_SkySettings_SetScopeNoCapture (qboolean level);
+// Whether the active sky scope is level-local (true) or global (false).
+qboolean RT_SkySettings_IsLevelScope (void);
 // Whether this session changed the sky settings or their scope at all.
 qboolean RT_SkySettings_SessionDirty (void);
 // The live values belong to the active set, for the session's writer.
@@ -269,11 +274,16 @@ void RT_SkySettings_CaptureScope (void);
 // Writes the level's "sky:" block (its own set) for the editor's session file;
 // returns the entries written.
 int  RT_SkySettings_WriteLevel (FILE *f);
-// The editor session: BeginSession snapshots the state, EndSession (Discard, or
-// an editor closed without saving) puts it back, and CommitSession (a save)
-// makes what the save carried the state -- in global scope the level's own set
-// goes away with the file's block.
+// The editor session: BeginSession snapshots the state (disk baseline and
+// initial checkpoint), CheckpointSession updates the Cancel checkpoint after
+// Apply while keeping the disk baseline intact, RestoreCheckpoint reverts to
+// the last checkpoint while keeping the session active, EndSession (Discard, or
+// an editor closed without saving) puts the disk baseline back, and
+// CommitSession (a save) makes what the save carried the state -- in global
+// scope the level's own set goes away with the file's block.
 void RT_SkySettings_BeginSession (void);
+void RT_SkySettings_CheckpointSession (void);
+void RT_SkySettings_RestoreCheckpoint (void);
 void RT_SkySettings_EndSession (void);
 void RT_SkySettings_CommitSession (qboolean global_scope);
 // The live values become the globals (the editor's Reset).
