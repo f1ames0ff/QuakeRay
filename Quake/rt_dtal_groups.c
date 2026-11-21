@@ -448,8 +448,7 @@ static int RT_Dtal_AddMember(rt_dtal_builder_t *builder, int groupIndex, const r
 
 static int RT_Dtal_AddSingleton(rt_dtal_builder_t *builder, const rt_dtal_input_t *input, int index, double spacing)
 {
-    rt_dtal_clipvert_t poly[RT_DTAL_MAX_VERTS];
-    memset(poly, 0, sizeof(poly));
+    rt_dtal_clipvert_t poly[RT_DTAL_MAX_VERTS] = {0};
 
     if (input->numVerts < 3 || input->numVerts > RT_DTAL_MAX_VERTS)
     {

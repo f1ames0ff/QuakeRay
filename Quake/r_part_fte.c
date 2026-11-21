@@ -4070,6 +4070,14 @@ struct fragmentdecal_s
 	void (*callback) (void *ctx, vec3_t *points, size_t numpoints);
 	void *ctx;
 };
+static void Fragment_CopyVerts (vec3_t *outverts, vec3_t *inverts, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+		VectorCopy (inverts[i], outverts[i]);
+}
+
 static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int incount, float *plane, float planedist)
 {
 	float dotv[MAXFRAGMENTVERTS + 1];
@@ -4108,7 +4116,7 @@ static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int inco
 		return 0; // all were clipped
 	if (clippedcount == 0)
 	{ // none were clipped
-		memcpy (outverts, inverts, (size_t)incount * sizeof (vec3_t));
+		Fragment_CopyVerts (outverts, inverts, incount);
 		return incount;
 	}
 

@@ -186,7 +186,8 @@ static void Con_Dump_f (void)
 	for (; l <= con_current; l++)
 	{
 		line = con_text + (l % con_totallines) * con_linewidth;
-		strncpy (buffer, line, linewidth);
+		for (x = 0; x < linewidth; x++)
+			buffer[x] = line[x];
 		for (x = linewidth - 1; x >= 0; x--)
 		{
 			if (buffer[x] == ' ')

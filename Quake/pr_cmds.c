@@ -657,9 +657,11 @@ break()
 */
 static void PF_break (void)
 {
+	intptr_t trap_addr = -4;
+
 	Con_Printf ("break statement\n");
-	*(int *)-4 = 0; // dump to debugger
-	                //	PR_RunError ("break statement");
+	*(volatile int *)trap_addr = 0; // dump to debugger
+	                                //	PR_RunError ("break statement");
 }
 
 /*

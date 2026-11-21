@@ -1020,8 +1020,8 @@ static void PF_FormatQuotedArg (const char *s0, const char *arg, char *out, size
 		l = 0;
 	}
 	out[0] = '\"';
-	if (l > 0)
-		memcpy (out + 1, arg, l);
+	for (size_t i = 0; i < l; i++)
+		out[1 + i] = arg[i];
 	out[1 + l] = '\"';
 	out[1 + l + 1] = 0;
 }
