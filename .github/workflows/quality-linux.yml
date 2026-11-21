@@ -19,7 +19,7 @@ env:
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.328.0
   QR_DXC_VERSION: v1.9.2609
   QR_DXC_ASSET: linux_dxc_2026_09_28.x86_x64.tar.gz
-  SONAR_CLI_VERSION: 6.2.1.4610
+  SONAR_CLI_VERSION: 8.4.0.16527
 
 jobs:
   quality:
@@ -168,7 +168,6 @@ jobs:
       - name: Run SonarQube Cloud analysis
         shell: bash
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
           SONAR_REGION: ${{ vars.SONAR_REGION }}
@@ -182,14 +181,13 @@ jobs:
           sonar_org="${SONAR_ORGANIZATION:-f1ames0ff}"
           sonar_proj="${SONAR_PROJECT_KEY:-f1ames0ff_QuakeRay}"
 
-          if [ -z "${SONAR_TOKEN:-}" ]; then
-            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-              echo "::notice::GitHub OIDC token unavailable (e.g. fork PR) and SONAR_TOKEN not set; skipping SonarQube Cloud scan."
-              exit 0
-            fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::notice::GitHub OIDC token unavailable (e.g. fork PR); skipping SonarQube Cloud scan."
+            exit 0
+          fi
 
-            oidc_json="$RUNNER_TEMP/sonar_oidc.json"
-            python3 -B - "$oidc_json" "$sonar_proj" <<'PY'
+          oidc_json="$RUNNER_TEMP/sonar_oidc.json"
+          python3 -B - "$oidc_json" "$sonar_proj" <<'PY'
           import json
           import os
           import sys
@@ -305,18 +303,17 @@ jobs:
           )
           PY
 
-            if [ "$(python3 -B -c 'import json,sys; print(1 if json.load(open(sys.argv[1])).get("skip") else 0)' "$oidc_json")" = "1" ]; then
-              rm -f "$oidc_json"
-              exit 0
-            fi
-            SONAR_TOKEN="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"], end="")' "$oidc_json")"
-            export SONAR_TOKEN
-            resolved_org="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("org",""), end="")' "$oidc_json")"
-            resolved_proj="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("proj",""), end="")' "$oidc_json")"
+          if [ "$(python3 -B -c 'import json,sys; print(1 if json.load(open(sys.argv[1])).get("skip") else 0)' "$oidc_json")" = "1" ]; then
             rm -f "$oidc_json"
-            sonar_org="${resolved_org:-$sonar_org}"
-            sonar_proj="${resolved_proj:-$sonar_proj}"
+            exit 0
           fi
+          SONAR_TOKEN="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"], end="")' "$oidc_json")"
+          export SONAR_TOKEN
+          resolved_org="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("org",""), end="")' "$oidc_json")"
+          resolved_proj="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("proj",""), end="")' "$oidc_json")"
+          rm -f "$oidc_json"
+          sonar_org="${resolved_org:-$sonar_org}"
+          sonar_proj="${resolved_proj:-$sonar_proj}"
 
           cli_dir="$RUNNER_TEMP/sonar-scanner"
           mkdir -p "$cli_dir"
