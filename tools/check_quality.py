@@ -11,7 +11,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
 import subprocess
@@ -35,10 +34,8 @@ C_CPP_HEADER_EXTS = {".h", ".hh", ".hpp", ".hxx"}
 C_CPP_EXTS = C_CPP_SOURCE_EXTS | C_CPP_HEADER_EXTS
 PY_EXTS = {".py"}
 
-HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-CLANG_TIDY_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):(\d+):[ \t]+(warning|error):[ \t]+([^\r\n]+)$")
-CPPCHECK_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):([^:\r\n]+):([^:\r\n]+):([^\r\n]*)$")
-RUFF_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):\d+:[ \t]+([A-Z]\d+)[ \t]+([^\r\n]+)$")
+_SAFE_REF_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./~^-")
+_HEX_CHARS = "0123456789abcdef"
 
 
 @dataclass(frozen=True)
@@ -91,6 +88,20 @@ def is_excluded(rel_path: str, exclude_prefixes: tuple[str, ...] = EXCLUDE_PREFI
     return any(norm == prefix.rstrip("/") or norm.startswith(prefix) for prefix in exclude_prefixes)
 
 
+def _parse_hunk_header(line: str) -> tuple[int, int] | None:
+    if not line.startswith("@@ -"):
+        return None
+    plus_idx = line.find(" +", 4)
+    end_idx = line.find(" @@", plus_idx + 2) if plus_idx != -1 else -1
+    if plus_idx == -1 or end_idx == -1:
+        return None
+    span = line[plus_idx + 2 : end_idx]
+    start_str, sep, count_str = span.partition(",")
+    if not start_str.isdigit() or (sep and not count_str.isdigit()):
+        return None
+    return int(start_str), (int(count_str) if sep else 1)
+
+
 def parse_git_diff_hunks(diff_text: str) -> dict[str, set[int]]:
     """Parse `git diff -U0` output into {rel_path: {1-based changed line numbers}}."""
     changed: dict[str, set[int]] = defaultdict(set)
@@ -107,11 +118,10 @@ def parse_git_diff_hunks(diff_text: str) -> dict[str, set[int]]:
             continue
         if current_path is None:
             continue
-        match = HUNK_RE.match(line)
-        if not match:
+        parsed = _parse_hunk_header(line)
+        if parsed is None:
             continue
-        start = int(match.group(1))
-        count = int(match.group(2)) if match.group(2) is not None else 1
+        start, count = parsed
         if count > 0:
             changed[current_path].update(range(start, start + count))
     return dict(changed)
@@ -125,6 +135,67 @@ def _run_git(repo_root: Path, args: list[str], *, check: bool = True) -> subproc
         errors="replace",
         check=check,
     )
+
+
+def _is_valid_ref_syntax(raw_ref: str) -> bool:
+    if not raw_ref or len(raw_ref) > 128 or raw_ref.startswith("-"):
+        return False
+    if ".." in raw_ref or "//" in raw_ref or "\\" in raw_ref or raw_ref.endswith(".lock"):
+        return False
+    return all(ch in _SAFE_REF_CHARS for ch in raw_ref)
+
+
+def _lookup_named_ref(repo_root: Path, ref_name: str) -> str | None:
+    show = _run_git(repo_root, ["show-ref"], check=False)
+    if show.returncode != 0:
+        return None
+    for line in show.stdout.splitlines():
+        sha, sep, full_ref = line.partition(" ")
+        if not sep:
+            continue
+        candidates = {
+            full_ref,
+            full_ref.removeprefix("refs/heads/"),
+            full_ref.removeprefix("refs/remotes/"),
+            full_ref.removeprefix("refs/tags/"),
+        }
+        if ref_name in candidates:
+            return sha
+    return None
+
+
+def _lookup_commit_sha(repo_root: Path, hex_prefix: str) -> str | None:
+    norm = hex_prefix.lower()
+    if len(norm) < 7 or len(norm) > 40 or not all(ch in _HEX_CHARS for ch in norm):
+        return None
+    revs = _run_git(repo_root, ["rev-list", "--max-count=512", "HEAD", "--all"], check=False)
+    if revs.returncode == 0:
+        for sha in revs.stdout.splitlines():
+            if sha.startswith(norm):
+                return sha
+    if len(norm) == 40:
+        clean_sha = f"{int(norm, 16):040x}"
+        check = _run_git(repo_root, ["cat-file", "-t", clean_sha], check=False)
+        if check.returncode == 0 and check.stdout.strip() == "commit":
+            return clean_sha
+    return None
+
+
+def resolve_base_ref(repo_root: Path, raw_ref: str) -> str:
+    """Validate and resolve a git base ref to an untainted commit ref or SHA."""
+    if not _is_valid_ref_syntax(raw_ref):
+        raise ValueError(f"invalid git base ref: {raw_ref!r}")
+    if raw_ref == "HEAD":
+        return "HEAD"
+    if raw_ref.startswith("HEAD~") and raw_ref[5:].isdigit():
+        return f"HEAD~{int(raw_ref[5:])}"
+    resolved = _lookup_named_ref(repo_root, raw_ref)
+    if resolved is not None:
+        return resolved
+    resolved = _lookup_commit_sha(repo_root, raw_ref)
+    if resolved is not None:
+        return resolved
+    raise ValueError(f"unknown git base ref: {raw_ref!r}")
 
 
 def collect_changed_lines(
@@ -147,7 +218,8 @@ def collect_changed_lines(
                 line_count = max(1, len(full.read_bytes().splitlines()))
                 changed.setdefault(rel, set()).update(range(1, line_count + 1))
     else:
-        diff_res = _run_git(repo_root, ["diff", "-U0", f"{base_ref}...HEAD"], check=True)
+        safe_base = resolve_base_ref(repo_root, base_ref)
+        diff_res = _run_git(repo_root, ["diff", "-U0", f"{safe_base}...HEAD"], check=True)
         changed = parse_git_diff_hunks(diff_res.stdout)
 
     filtered: dict[str, set[int]] = {}
@@ -167,6 +239,48 @@ def resolve_tool_cmd(tool: str) -> list[str] | None:
         if uvx:
             return [uvx, tool]
     return None
+
+
+def _select_target_files(changed_lines: dict[str, set[int]], extensions: set[str]) -> list[str]:
+    return sorted(f for f in changed_lines if Path(f).suffix in extensions)
+
+
+def _prepare_tool(
+    tool: str,
+    files: list[str],
+    empty_label: str,
+    strict_tools: bool,
+) -> tuple[list[str] | None, list[Finding], list[str]]:
+    if not files:
+        return None, [], [f"{tool}: skipped (no changed {empty_label} files)"]
+    cmd_base = resolve_tool_cmd(tool)
+    if not cmd_base:
+        note = f"{tool}: skipped (tool not installed)"
+        found = [Finding(tool, ".", 1, "error", "missing-tool", note)] if strict_tools else []
+        return None, found, [note]
+    return cmd_base, [], []
+
+
+def _split_diag_line(raw_line: str, expected_parts: int) -> list[str] | None:
+    line = raw_line.strip()
+    if not line or expected_parts < 2:
+        return None
+    scan = 2 if len(line) >= 2 and line[0].isalpha() and line[1] == ":" else 0
+    parts = line[scan:].split(":", expected_parts - 1)
+    if len(parts) != expected_parts:
+        return None
+    first = line[:scan] + parts[0]
+    if not first:
+        return None
+    parts[0] = first
+    return parts
+
+
+def _append_unique_finding(findings: list[Finding], seen: set[tuple[str, int, str, str]], finding: Finding) -> None:
+    key = (finding.path, finding.line, finding.rule, finding.message)
+    if key not in seen:
+        seen.add(key)
+        findings.append(finding)
 
 
 def load_compile_db(compile_db_path: Path, repo_root: Path) -> dict[str, dict]:
@@ -226,20 +340,20 @@ def parse_clang_tidy_output(output: str, repo_root: Path, changed_lines: dict[st
     findings: list[Finding] = []
     seen: set[tuple[str, int, str, str]] = set()
     for raw_line in output.splitlines():
-        match = CLANG_TIDY_RE.match(raw_line.strip())
-        if not match:
+        parts = _split_diag_line(raw_line, 5)
+        if parts is None:
             continue
-        file_str, line_str, _col, severity, rest = match.groups()
+        file_str, line_str, col_str, sev_raw, rest_raw = parts
+        severity = sev_raw.strip(" \t")
+        rest = rest_raw.lstrip(" \t")
+        if not line_str.isdigit() or not col_str.isdigit() or severity not in {"warning", "error"} or not rest:
+            continue
         rel = norm_rel(file_str, repo_root)
         line_no = int(line_str)
-        if rel not in changed_lines or line_no not in changed_lines[rel]:
+        if line_no not in changed_lines.get(rel, ()):
             continue
         msg, rule_name = _split_clang_tidy_rest(rest)
-        key = (rel, line_no, rule_name, msg)
-        if key in seen:
-            continue
-        seen.add(key)
-        findings.append(Finding("clang-tidy", rel, line_no, severity, rule_name, msg))
+        _append_unique_finding(findings, seen, Finding("clang-tidy", rel, line_no, severity, rule_name, msg))
     return findings
 
 
@@ -249,32 +363,29 @@ def run_clang_tidy_check(
     compile_db_path: Path | None,
     strict_tools: bool,
 ) -> tuple[list[Finding], list[str]]:
-    c_files = sorted(f for f in changed_lines if Path(f).suffix in C_CPP_EXTS)
-    if not c_files:
-        return [], ["clang-tidy: skipped (no changed C/C++ files)"]
-    if compile_db_path is None or not compile_db_path.is_file():
+    c_files = _select_target_files(changed_lines, C_CPP_EXTS)
+    if c_files and (compile_db_path is None or not compile_db_path.is_file()):
         note = "clang-tidy: skipped (no compile_commands.json provided)"
         return ([Finding("clang-tidy", ".", 1, "error", "missing-compile-db", note)] if strict_tools else [], [note])
 
-    cmd_base = resolve_tool_cmd("clang-tidy")
-    if not cmd_base:
-        note = "clang-tidy: skipped (tool not installed)"
-        return ([Finding("clang-tidy", ".", 1, "error", "missing-tool", note)] if strict_tools else [], [note])
+    cmd_base, err_findings, err_notes = _prepare_tool("clang-tidy", c_files, "C/C++", strict_tools)
+    if cmd_base is None:
+        return err_findings, err_notes
 
-    compile_db = load_compile_db(compile_db_path, repo_root)
+    compile_db = load_compile_db(compile_db_path, repo_root) if compile_db_path else {}
     tus = find_target_tus(c_files, compile_db)
     if not tus:
         return [], ["clang-tidy: skipped (changed headers/files have no matching compile_commands TU)"]
 
     config_file = repo_root / ".clang-tidy"
     findings: list[Finding] = []
-    build_dir = compile_db_path.parent
+    build_dir = str(compile_db_path.parent) if compile_db_path else str(repo_root)
     for tu in tus:
         args = [
             *cmd_base,
             f"--config-file={config_file}",
             "-p",
-            str(build_dir),
+            build_dir,
             "--extra-arg=-Wno-unknown-warning-option",
             str(repo_root / tu),
         ]
@@ -296,12 +407,8 @@ def extract_cppcheck_flags(entry: dict, repo_root: Path) -> list[str]:
     while i < len(tokens):
         tok = tokens[i]
         if tok in {"-I", "-isystem", "-D", "-U"} and i + 1 < len(tokens):
-            val = tokens[i + 1]
-            if tok in {"-I", "-isystem"}:
-                val = os.path.normpath(os.path.join(work_dir, val))
-                flags.extend(["-I", val])
-            else:
-                flags.extend([tok, val])
+            val = os.path.normpath(os.path.join(work_dir, tokens[i + 1])) if tok in {"-I", "-isystem"} else tokens[i + 1]
+            flags.extend(["-I" if tok in {"-I", "-isystem"} else tok, val])
             i += 2
             continue
         if tok.startswith(("-I", "-isystem")):
@@ -322,23 +429,18 @@ def parse_cppcheck_output(output: str, repo_root: Path, changed_lines: dict[str,
     findings: list[Finding] = []
     seen: set[tuple[str, int, str, str]] = set()
     for raw_line in output.splitlines():
-        match = CPPCHECK_RE.match(raw_line.strip())
-        if not match:
+        parts = _split_diag_line(raw_line, 5)
+        if parts is None:
             continue
-        file_str, line_str, severity, rule_id, msg = match.groups()
+        file_str, line_str, severity, rule_id, msg = parts
+        if not line_str.isdigit() or not severity or not rule_id:
+            continue
         line_no = int(line_str)
-        if line_no <= 0:
-            continue
         rel = norm_rel(file_str, repo_root)
-        if rel not in changed_lines:
+        if line_no <= 0 or rel not in changed_lines:
             continue
-        if line_no not in changed_lines[rel] and severity != "error":
-            continue
-        key = (rel, line_no, rule_id, msg)
-        if key in seen:
-            continue
-        seen.add(key)
-        findings.append(Finding("cppcheck", rel, line_no, severity, rule_id, msg))
+        if line_no in changed_lines[rel] or severity == "error":
+            _append_unique_finding(findings, seen, Finding("cppcheck", rel, line_no, severity, rule_id, msg))
     return findings
 
 
@@ -348,13 +450,10 @@ def run_cppcheck_check(
     compile_db_path: Path | None,
     strict_tools: bool,
 ) -> tuple[list[Finding], list[str]]:
-    c_files = sorted(f for f in changed_lines if Path(f).suffix in C_CPP_EXTS)
-    if not c_files:
-        return [], ["cppcheck: skipped (no changed C/C++ files)"]
-    cmd_base = resolve_tool_cmd("cppcheck")
-    if not cmd_base:
-        note = "cppcheck: skipped (tool not installed)"
-        return ([Finding("cppcheck", ".", 1, "error", "missing-tool", note)] if strict_tools else [], [note])
+    c_files = _select_target_files(changed_lines, C_CPP_EXTS)
+    cmd_base, err_findings, err_notes = _prepare_tool("cppcheck", c_files, "C/C++", strict_tools)
+    if cmd_base is None:
+        return err_findings, err_notes
 
     compile_db = load_compile_db(compile_db_path, repo_root) if compile_db_path else {}
     tus = find_target_tus(c_files, compile_db) if compile_db else [f for f in c_files if Path(f).suffix in C_CPP_SOURCE_EXTS]
@@ -422,20 +521,18 @@ def evaluate_complexity_ratchet(
         if not _overlaps(fn, lines):
             continue
         base = base_by_name.get(fn.name)
-        if base is None:
-            if fn.ccn > limits.ccn_max:
-                findings.append(Finding("lizard", rel_path, fn.start_line, "error", "ccn", f"function '{fn.name}' CCN {fn.ccn} > {limits.ccn_max}"))
-            if fn.nloc > limits.nloc_max:
-                findings.append(Finding("lizard", rel_path, fn.start_line, "error", "nloc", f"function '{fn.name}' NLOC {fn.nloc} > {limits.nloc_max}"))
-            if fn.params > limits.params_max:
-                findings.append(Finding("lizard", rel_path, fn.start_line, "error", "params", f"function '{fn.name}' params {fn.params} > {limits.params_max}"))
-            continue
-        if fn.ccn > limits.ccn_max and fn.ccn > base.ccn:
-            findings.append(Finding("lizard", rel_path, fn.start_line, "error", "ccn-regression", f"function '{fn.name}' CCN worsened {base.ccn} -> {fn.ccn} (max {limits.ccn_max})"))
-        if fn.nloc > limits.nloc_max and fn.nloc > base.nloc + 5:
-            findings.append(Finding("lizard", rel_path, fn.start_line, "error", "nloc-regression", f"function '{fn.name}' NLOC grew {base.nloc} -> {fn.nloc} (max {limits.nloc_max})"))
-        if fn.params > limits.params_max and fn.params > base.params:
-            findings.append(Finding("lizard", rel_path, fn.start_line, "error", "params-regression", f"function '{fn.name}' params grew {base.params} -> {fn.params} (max {limits.params_max})"))
+        checks = (
+            ("ccn", "CCN", fn.ccn, base.ccn if base else None, limits.ccn_max, 0),
+            ("nloc", "NLOC", fn.nloc, base.nloc if base else None, limits.nloc_max, 5),
+            ("params", "params", fn.params, base.params if base else None, limits.params_max, 0),
+        )
+        for rule, label, cur_val, base_val, max_val, slack in checks:
+            if cur_val <= max_val:
+                continue
+            if base_val is None:
+                findings.append(Finding("lizard", rel_path, fn.start_line, "error", rule, f"function '{fn.name}' {label} {cur_val} > {max_val}"))
+            elif cur_val > base_val + slack:
+                findings.append(Finding("lizard", rel_path, fn.start_line, "error", f"{rule}-regression", f"function '{fn.name}' {label} grew {base_val} -> {cur_val} (max {max_val})"))
     return findings
 
 
@@ -474,18 +571,14 @@ def run_lizard_check(
     limits: QualityLimits,
     strict_tools: bool,
 ) -> tuple[list[Finding], list[str]]:
-    targets = sorted(f for f in changed_lines if Path(f).suffix in (C_CPP_EXTS | PY_EXTS))
-    if not targets:
-        return [], ["lizard: skipped (no changed C/C++/Python files)"]
-    lizard_cmd = resolve_tool_cmd("lizard")
-    if not lizard_cmd:
-        note = "lizard: skipped (tool not installed)"
-        return ([Finding("lizard", ".", 1, "error", "missing-tool", note)] if strict_tools else [], [note])
+    targets = _select_target_files(changed_lines, C_CPP_EXTS | PY_EXTS)
+    lizard_cmd, err_findings, err_notes = _prepare_tool("lizard", targets, "C/C++/Python", strict_tools)
+    if lizard_cmd is None:
+        return err_findings, err_notes
 
     res = subprocess.run([*lizard_cmd, "--csv", *[str(repo_root / t) for t in targets]], capture_output=True, text=True, errors="replace")
-    raw_cur = parse_lizard_csv(res.stdout)
-    cur_by_rel = {norm_rel(path, repo_root): funcs for path, funcs in raw_cur.items()}
-    git_base = "HEAD" if local else base_ref
+    cur_by_rel = {norm_rel(path, repo_root): funcs for path, funcs in parse_lizard_csv(res.stdout).items()}
+    git_base = "HEAD" if local else resolve_base_ref(repo_root, base_ref)
     base_by_rel = _load_base_metrics(lizard_cmd, repo_root, git_base, targets)
 
     findings: list[Finding] = []
@@ -500,10 +593,16 @@ def parse_ruff_output(output: str, repo_root: Path, changed_lines: dict[str, set
     """Filter ruff diagnostics to changed Python lines (always fail syntax/undefined names)."""
     findings: list[Finding] = []
     for raw_line in output.splitlines():
-        match = RUFF_RE.match(raw_line.strip())
-        if not match:
+        parts = _split_diag_line(raw_line, 4)
+        if parts is None:
             continue
-        file_str, line_str, code, msg = match.groups()
+        file_str, line_str, col_str, rest_raw = parts
+        tokens = rest_raw.lstrip(" \t").split(None, 1)
+        if not line_str.isdigit() or not col_str.isdigit() or len(tokens) != 2:
+            continue
+        code, msg = tokens
+        if len(code) < 2 or not code[0].isupper() or not code[1:].isdigit():
+            continue
         line_no = int(line_str)
         rel = norm_rel(file_str, repo_root)
         if rel not in changed_lines:
@@ -518,13 +617,10 @@ def run_ruff_check(
     changed_lines: dict[str, set[int]],
     strict_tools: bool,
 ) -> tuple[list[Finding], list[str]]:
-    py_files = sorted(f for f in changed_lines if Path(f).suffix in PY_EXTS)
-    if not py_files:
-        return [], ["ruff: skipped (no changed Python files)"]
-    ruff_cmd = resolve_tool_cmd("ruff")
-    if not ruff_cmd:
-        note = "ruff: skipped (tool not installed)"
-        return ([Finding("ruff", ".", 1, "error", "missing-tool", note)] if strict_tools else [], [note])
+    py_files = _select_target_files(changed_lines, PY_EXTS)
+    ruff_cmd, err_findings, err_notes = _prepare_tool("ruff", py_files, "Python", strict_tools)
+    if ruff_cmd is None:
+        return err_findings, err_notes
 
     args = [
         *ruff_cmd,
@@ -553,7 +649,7 @@ def run_shader_check(repo_root: Path) -> tuple[list[Finding], list[str]]:
     if gen_script.is_file() and dxc:
         gen = subprocess.run([sys.executable, "-B", "GenerateShaders.py", "-rebuild"], capture_output=True, text=True, errors="replace", cwd=shader_dir)
         combined = gen.stdout + "\n" + gen.stderr
-        if gen.returncode != 0 or re.search(r"shader builds? failed", combined):
+        if gen.returncode != 0 or "shader build failed" in combined or "shader builds failed" in combined:
             findings.append(Finding("dxc", "renderer/Source/Shaders/GenerateShaders.py", 1, "error", "shader-build", combined.strip()[-400:]))
         status = f"shaders: CheckMatrixReads + dxc rebuild -> {len(findings)} finding(s)"
     else:
@@ -580,12 +676,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
+    try:
+        safe_base = "HEAD" if args.local else resolve_base_ref(repo_root, args.base)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
     skipped = {s.strip().lower() for s in args.skip.split(",") if s.strip()}
     compile_db = args.compile_commands
     if compile_db is None and (repo_root / "build/quality/compile_commands.json").is_file():
         compile_db = repo_root / "build/quality/compile_commands.json"
 
-    changed_lines = collect_changed_lines(repo_root, args.base, args.local)
+    changed_lines = collect_changed_lines(repo_root, safe_base, args.local)
     all_findings: list[Finding] = []
     summaries: list[str] = []
 
@@ -594,7 +696,7 @@ def main(argv: list[str] | None = None) -> int:
         checks = [
             ("clang-tidy", lambda: run_clang_tidy_check(repo_root, changed_lines, compile_db, args.strict_tools)),
             ("cppcheck", lambda: run_cppcheck_check(repo_root, changed_lines, compile_db, args.strict_tools)),
-            ("lizard", lambda: run_lizard_check(repo_root, changed_lines, args.base, args.local, limits, args.strict_tools)),
+            ("lizard", lambda: run_lizard_check(repo_root, changed_lines, safe_base, args.local, limits, args.strict_tools)),
             ("ruff", lambda: run_ruff_check(repo_root, changed_lines, args.strict_tools)),
         ]
         for name, runner in checks:
