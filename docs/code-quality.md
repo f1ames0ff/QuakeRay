@@ -47,7 +47,7 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:hal
 
 ## Activating SonarQube Cloud
 
-Both `.github/workflows/quality-linux.yml` workflows support **Secretless analysis** via GitHub OIDC (no static `SONAR_TOKEN` secret required; `SONAR_TOKEN` remains supported as an optional fallback) and keep **zero marketplace `uses:` actions** (`allowed_actions: local_only`). Both `.sonarcloud.properties` (Automatic Analysis) and `sonar-project.properties` (CI scanner) are present so vendored trees and cross-repo submodule copies stay excluded.
+Both `.github/workflows/quality-linux.yml` workflows authenticate exclusively via GitHub OIDC **Secretless analysis** (no `SONAR_TOKEN` secret is read, so stale or placeholder repository secrets cannot interfere) and keep **zero marketplace `uses:` actions** (`allowed_actions: local_only`). Both `.sonarcloud.properties` (Automatic Analysis) and `sonar-project.properties` (CI scanner) are present so vendored trees and cross-repo submodule copies stay excluded.
 
 1. In SonarQube Cloud Organization settings (**Administration -> Analysis method**), enable **Secretless analysis for GitHub Actions** (`f1ames0ff`).
 2. In each project's settings (`f1ames0ff_QuakeRay` and `f1ames0ff_QuakeRaySDK`, **Administration -> Analysis Method**), turn **Automatic Analysis** **OFF** so CI-based scanning with `compile_commands.json` (`Clean as You Code`) runs without conflict.
