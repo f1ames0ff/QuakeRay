@@ -476,8 +476,9 @@ static void R_TimeRefreshNoop (void *unused)
 {
 }
 
-static void R_TimeRefreshDrawDone (gl_end_rendering_context_t **context)
+static void R_TimeRefreshDrawDone (void *payload)
 {
+	gl_end_rendering_context_t **context = (gl_end_rendering_context_t **) payload;
 	GL_CaptureEndRenderingSnapshot (*context);
 }
 

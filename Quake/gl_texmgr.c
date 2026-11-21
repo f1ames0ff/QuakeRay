@@ -163,7 +163,7 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
    sees the new revision sees a finished texture. What a texture emits (is_light, the mask, its
    glow extents) is read off those fields, and the DTAL piece cache of an alias model is only as
    fresh as the revision it was built and published under (see RT_AddAliasEmissiveLights). */
-atomic_uint32_t rt_material_revision = {0};
+atomic_uint32_t rt_material_revision;
 
 
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic)

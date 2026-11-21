@@ -33,6 +33,7 @@ option(USE_CODEC_MIKMOD "Enable MikMod tracker music"         OFF)
 option(USE_CODEC_MODPLUG "Enable ModPlug tracker music"       OFF)
 
 option(ENABLE_MIMALLOC  "Use mimalloc allocator"              OFF)
+option(QR_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
 
 # ============================================================================
 # Platform detection
@@ -100,6 +101,11 @@ endif()
 
 if(QUAKERAY_PLATFORM_LINUX)
     link_libraries(m dl pthread)
+endif()
+
+if(QR_ENABLE_SANITIZERS AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=address,undefined)
 endif()
 
 # ============================================================================
