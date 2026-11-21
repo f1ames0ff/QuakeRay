@@ -196,27 +196,38 @@ int Datagram_SendMessage (qsocket_t *sock, sizebuf_t *data)
 	return 1;
 }
 
-static int SendMessageNext (qsocket_t *sock)
+static int Datagram_DataPacketLen (const qsocket_t *sock, unsigned int *out_eom)
 {
-	unsigned int packetLen;
-	unsigned int dataLen;
-	unsigned int eom;
+	int dataLen;
 
 	if (sock->sendMessageLength < 0 || sock->max_datagram < 0)
 		return -1;
 
 	if (sock->sendMessageLength <= sock->max_datagram)
 	{
-		dataLen = (unsigned int)sock->sendMessageLength;
-		eom = NETFLAG_EOM;
+		dataLen = sock->sendMessageLength;
+		*out_eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = (unsigned int)sock->max_datagram;
-		eom = 0;
+		dataLen = sock->max_datagram;
+		*out_eom = 0;
 	}
-	if (dataLen > sizeof (packetBuffer.data))
-		dataLen = (unsigned int)sizeof (packetBuffer.data);
+	if (dataLen > (int)sizeof (packetBuffer.data))
+		dataLen = (int)sizeof (packetBuffer.data);
+	return dataLen;
+}
+
+static int SendMessageNext (qsocket_t *sock)
+{
+	unsigned int packetLen;
+	unsigned int dataLen;
+	unsigned int eom;
+	int          clampedLen = Datagram_DataPacketLen (sock, &eom);
+
+	if (clampedLen < 0)
+		return -1;
+	dataLen = (unsigned int)clampedLen;
 	packetLen = NET_HEADERSIZE + dataLen;
 
 	packetBuffer.length = BigLong (packetLen | (NETFLAG_DATA | eom));
@@ -238,22 +249,11 @@ static int ReSendMessage (qsocket_t *sock)
 	unsigned int packetLen;
 	unsigned int dataLen;
 	unsigned int eom;
+	int          clampedLen = Datagram_DataPacketLen (sock, &eom);
 
-	if (sock->sendMessageLength < 0 || sock->max_datagram < 0)
+	if (clampedLen < 0)
 		return -1;
-
-	if (sock->sendMessageLength <= sock->max_datagram)
-	{
-		dataLen = (unsigned int)sock->sendMessageLength;
-		eom = NETFLAG_EOM;
-	}
-	else
-	{
-		dataLen = (unsigned int)sock->max_datagram;
-		eom = 0;
-	}
-	if (dataLen > sizeof (packetBuffer.data))
-		dataLen = (unsigned int)sizeof (packetBuffer.data);
+	dataLen = (unsigned int)clampedLen;
 	packetLen = NET_HEADERSIZE + dataLen;
 
 	packetBuffer.length = BigLong (packetLen | (NETFLAG_DATA | eom));

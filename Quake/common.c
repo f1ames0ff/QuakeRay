@@ -2074,7 +2074,7 @@ byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 		return NULL;
 
 	len = COM_filelength (f);
-	if (len < 0)
+	if (len < 0 || len > 64 * 1024 * 1024)
 	{
 		fclose (f);
 		return NULL;
