@@ -394,32 +394,40 @@ def run_clang_tidy_check(
     return findings, [f"clang-tidy: checked {len(tus)} TU(s) -> {len(findings)} finding(s)"]
 
 
+def _single_cppcheck_flag(tok: str, work_dir: str) -> list[str]:
+    if tok.startswith("-I"):
+        path = tok[2:]
+        return ["-I", os.path.normpath(os.path.join(work_dir, path))] if path else []
+    if tok.startswith("-isystem"):
+        path = tok[8:]
+        return ["-I", os.path.normpath(os.path.join(work_dir, path))] if path else []
+    if tok.startswith(("-D", "-U")):
+        return [tok]
+    if tok.startswith("-std="):
+        std = tok[5:].replace("gnu++", "c++").replace("gnu", "c")
+        return [f"--std={std}"]
+    return []
+
+
 def extract_cppcheck_flags(entry: dict, repo_root: Path) -> list[str]:
     """Extract include paths, defines, and language standard for cppcheck from compile_commands."""
-    if "arguments" in entry and isinstance(entry["arguments"], list):
+    if isinstance(entry.get("arguments"), list):
         tokens = [str(t) for t in entry["arguments"]]
     else:
         tokens = shlex.split(entry.get("command", ""))
     raw_dir = entry.get("directory")
-    work_dir = str(raw_dir) if isinstance(raw_dir, str) and raw_dir else str(repo_root)
+    work_dir = raw_dir if isinstance(raw_dir, str) and raw_dir else str(repo_root)
     flags: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
         if tok in {"-I", "-isystem", "-D", "-U"} and i + 1 < len(tokens):
-            val = os.path.normpath(os.path.join(work_dir, tokens[i + 1])) if tok in {"-I", "-isystem"} else tokens[i + 1]
-            flags.extend(["-I" if tok in {"-I", "-isystem"} else tok, val])
+            flag = "-I" if tok in {"-I", "-isystem"} else tok
+            val = os.path.normpath(os.path.join(work_dir, tokens[i + 1])) if flag == "-I" else tokens[i + 1]
+            flags.extend([flag, val])
             i += 2
             continue
-        if tok.startswith(("-I", "-isystem")):
-            raw_path = tok[2:] if tok.startswith("-I") else tok[8:]
-            if raw_path:
-                flags.extend(["-I", os.path.normpath(os.path.join(work_dir, raw_path))])
-        elif tok.startswith(("-D", "-U")):
-            flags.append(tok)
-        elif tok.startswith("-std="):
-            std = tok[5:].replace("gnu++", "c++").replace("gnu", "c")
-            flags.append(f"--std={std}")
+        flags.extend(_single_cppcheck_flag(tok, work_dir))
         i += 1
     return flags
 
