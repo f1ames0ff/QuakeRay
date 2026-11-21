@@ -1674,7 +1674,7 @@ static void PF_sv_setspawnparms (void)
 	client = svs.clients + (i - 1);
 
 	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-		(&pr_global_struct->parm1)[i] = client->spawn_parms[i];
+		*PR_SpawnParmPtr (i) = client->spawn_parms[i];
 }
 
 /*

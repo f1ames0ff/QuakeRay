@@ -5254,22 +5254,23 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir)
 {
-	if (vid_menu_nummodes)
+	if (vid_menu_nummodes > 0)
 	{
-		int i;
-		for (i = 0; i < vid_menu_nummodes; i++)
+		const int num_modes = CLAMP (1, vid_menu_nummodes, MAX_MODE_LIST);
+		int       i;
+		for (i = 0; i < num_modes; i++)
 		{
 			if (vid_menu_modes[i].width == vid_width.value && vid_menu_modes[i].height == vid_height.value)
 				break;
 		}
 
-		if (i == vid_menu_nummodes) // can't find it in list, so it must be a custom windowed res
+		if (i == num_modes) // can't find it in list, so it must be a custom windowed res
 		{
 			i = 0;
 		}
 		else
 		{
-			i = CLAMP (0, i + dir, vid_menu_nummodes - 1);
+			i = CLAMP (0, i + dir, num_modes - 1);
 		}
 
 		Cvar_SetValueQuick (&vid_width, (float)vid_menu_modes[i].width);

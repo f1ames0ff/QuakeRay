@@ -476,12 +476,14 @@ static void PF_strzone (void)
 {
 	char       *buf;
 	size_t      len = 0;
-	const char *s[8];
-	size_t      l[8];
+	const char *s[8] = {0};
+	size_t      l[8] = {0};
 	int         i;
+	int         argc;
 	size_t      id;
 
-	for (i = 0; i < qcvm->argc; i++)
+	argc = CLAMP (0, qcvm->argc, (int)countof (s));
+	for (i = 0; i < argc; i++)
 	{
 		s[i] = G_STRING (OFS_PARM0 + i * 3);
 		l[i] = strlen (s[i]);
@@ -502,7 +504,7 @@ static void PF_strzone (void)
 	}
 	qcvm->knownzone[id >> 3] |= 1u << (id & 7);
 
-	for (i = 0; i < qcvm->argc; i++)
+	for (i = 0; i < argc; i++)
 	{
 		memcpy (buf, s[i], l[i]);
 		buf += l[i];
@@ -1008,6 +1010,22 @@ static void PF_strireplace (void)
 		G_INT (OFS_RETURN) = PR_SetEngineString (subject);
 }
 
+static void PF_FormatQuotedArg (const char *s0, const char *arg, char *out, size_t outsize)
+{
+	size_t l = arg ? strlen (arg) : 0;
+	if (!arg || strchr (arg, '\"') || strchr (arg, '\n') || strchr (arg, '\r') || l + 3 >= outsize)
+	{ // our escapes suck...
+		Con_Warning ("PF_sprintf: unable to safely escape arg: %s\n", s0);
+		arg = "";
+		l = 0;
+	}
+	out[0] = '\"';
+	if (l > 0)
+		memcpy (out + 1, arg, l);
+	out[1 + l] = '\"';
+	out[1 + l + 1] = 0;
+}
+
 static void PF_sprintf_internal (const char *s, int firstarg, char *outbuf, int outbuflen)
 {
 	const char  *s0;
@@ -1352,18 +1370,8 @@ static void PF_sprintf_internal (const char *s, int firstarg, char *outbuf, int 
 					const char *quotedarg = GETARG_STRING (thisarg);
 
 					// try and escape it... hopefully it won't get truncated by precision limits...
-					char   quotedbuf[65536];
-					size_t l;
-					l = strlen (quotedarg);
-					if (strchr (quotedarg, '\"') || strchr (quotedarg, '\n') || strchr (quotedarg, '\r') || l + 3 >= sizeof (quotedbuf))
-					{ // our escapes suck...
-						Con_Warning ("PF_sprintf: unable to safely escape arg: %s\n", s0);
-						quotedarg = "";
-					}
-					quotedbuf[0] = '\"';
-					memcpy (quotedbuf + 1, quotedarg, l);
-					quotedbuf[1 + l] = '\"';
-					quotedbuf[1 + l + 1] = 0;
+					char quotedbuf[65536];
+					PF_FormatQuotedArg (s0, quotedarg, quotedbuf, sizeof (quotedbuf));
 					quotedarg = quotedbuf;
 
 					// UTF-8-FIXME: figure it out yourself

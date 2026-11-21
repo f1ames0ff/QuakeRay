@@ -677,7 +677,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         const float raw = (float)atof(value);
         float       v   = raw;
 
-        if (v != v)
+        if (isnan(v))
             v = 1.0f;
         else if (v < 0.0f)
             v = 0.0f;
@@ -694,7 +694,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         const float raw = (float)atof(value);
         float       v   = raw;
 
-        if (v != v || v < 0.0f)
+        if (isnan(v) || v < 0.0f)
             v = 0.0f;
         else if (v > 0.0f && v < 1.0f)
             v = 1.0f;
@@ -711,7 +711,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         const float raw = (float)atof(value);
         float       v   = raw;
 
-        if (v != v || v < 0.0f)
+        if (isnan(v) || v < 0.0f)
             v = 0.0f;
         else if (v > 64.0f)
             v = 64.0f;
@@ -1070,6 +1070,8 @@ static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_i
     buf = (char *)Mem_Alloc((size_t)len + 1);
     got = fread(buf, 1, (size_t)len, f);
     fclose(f);
+    if (got > (size_t)len)
+        got = (size_t)len;
     buf[got] = 0;
 
     count = rt_mat_parse_yaml(buf, (int)got, path, dest, max_items);
@@ -1333,6 +1335,8 @@ static char *rt_mat_read_pack_file(const pack_t *pak, const char *filename, int 
         buf = (char *)Mem_Alloc((size_t)filelen + 1);
         got = fread(buf, 1, (size_t)filelen, f);
         fclose(f);
+        if (got > (size_t)filelen)
+            got = (size_t)filelen;
         buf[got] = '\0';
         if (outLen)
         {
@@ -1860,9 +1864,9 @@ void RT_MAT_SetListCounts(int globalCount, int mapCount)
         mapCount = RT_MAT_MAX_MAP;
 
     /* dropped entries must not stay findable through a stale valid flag */
-    for (int i = globalCount; i < rt_global_count; i++)
+    for (int i = globalCount; i < rt_global_count && i < RT_MAT_MAX_GLOBAL; i++)
         rt_global_materials[i].valid = false;
-    for (int i = mapCount; i < rt_map_count; i++)
+    for (int i = mapCount; i < rt_map_count && i < RT_MAT_MAX_MAP; i++)
         rt_map_materials[i].valid = false;
 
     rt_global_count = globalCount;

@@ -539,7 +539,7 @@ uint64_t RT_GetBrushSurfUniqueId (int entuniqueid, const qmodel_t *model, const 
 	// look gl_model.c line 1327
     if (surfindex > 32767)
 	{
-		Con_DWarning ("%i faces exceeds standard limit of 32767.\n", surfindex);
+		Con_DWarning ("%llu faces exceeds standard limit of 32767.\n", (unsigned long long)surfindex);
 	}
 
 	return

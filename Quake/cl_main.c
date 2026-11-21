@@ -785,9 +785,9 @@ void CL_RelinkEntities (void)
 	bobjrotate = anglemod (100 * cl.time);
 
 	// start on the entity after the world
-	ent = (cl.entities != NULL) ? (cl.entities + 1) : NULL;
-	for (i = 1; i < cl.num_entities; i++, ent++)
+	for (i = 1; cl.entities != NULL && i < cl.num_entities; i++)
 	{
+		ent = &cl.entities[i];
 		if (!ent->model)
 		{ // empty slot, ish.
 

@@ -4085,6 +4085,9 @@ static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int inco
 	float *out;
 #define FRAG_EPSILON (1.0 / 32) // 0.5
 
+	if (incount < 3 || incount > MAXFRAGMENTVERTS)
+		return 0;
+
 	for (i = 0; i < incount; i++)
 	{
 		dotv[i] = DotProduct (inverts[i], plane) - planedist;
@@ -4105,8 +4108,7 @@ static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int inco
 		return 0; // all were clipped
 	if (clippedcount == 0)
 	{ // none were clipped
-		for (i = 0; i < incount; i++)
-			VectorCopy (inverts[i], outverts[i]);
+		memcpy (outverts, inverts, (size_t)incount * sizeof (vec3_t));
 		return incount;
 	}
 
@@ -4146,7 +4148,7 @@ static void Fragment_ClipPoly (fragmentdecal_t *dec, int numverts, vec3_t *inver
 	vec3_t d1, d2, n;
 	size_t numtris;
 
-	if (numverts > MAXFRAGMENTVERTS)
+	if (numverts < 3 || numverts > MAXFRAGMENTVERTS)
 		return;
 
 	if (r_decal_noperpendicular.value)

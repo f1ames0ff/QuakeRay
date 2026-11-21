@@ -440,7 +440,7 @@ int UDP_GetSocketAddr (sys_socket_t socketid, struct qsockaddr *addr)
 	else if (addr->qsa_family == AF_INET6)
 	{
 		static const struct in6_addr _in6addr_any = IN6ADDR_ANY_INIT;
-		if (!memcmp (&((struct sockaddr_in6 *)addr)->sin6_addr, &_in6addr_any, sizeof (_in6addr_any)))
+		if (!memcmp (((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr, _in6addr_any.s6_addr, sizeof (_in6addr_any.s6_addr)))
 			memcpy (&((struct sockaddr_in6 *)addr)->sin6_addr, &myAddrv6, sizeof (((struct sockaddr_in6 *)addr)->sin6_addr));
 	}
 
@@ -524,7 +524,9 @@ int UDP_AddrCompare (struct qsockaddr *addr1, struct qsockaddr *addr2)
 	}
 	else if (addr1->qsa_family == AF_INET6)
 	{
-		if (memcmp (&((struct sockaddr_in6 *)addr1)->sin6_addr, &((struct sockaddr_in6 *)addr2)->sin6_addr, sizeof (((struct sockaddr_in6 *)addr1)->sin6_addr)))
+		const struct in6_addr *a1 = &((const struct sockaddr_in6 *)addr1)->sin6_addr;
+		const struct in6_addr *a2 = &((const struct sockaddr_in6 *)addr2)->sin6_addr;
+		if (memcmp (a1->s6_addr, a2->s6_addr, sizeof (a1->s6_addr)))
 			return -1;
 
 		if (((struct sockaddr_in6 *)addr1)->sin6_port != ((struct sockaddr_in6 *)addr2)->sin6_port)

@@ -159,6 +159,7 @@ static void Con_Dump_f (void)
 	FILE       *f;
 	char        buffer[1024];
 	char        name[MAX_OSPATH];
+	const int   linewidth = CLAMP (0, con_linewidth, (int)sizeof (buffer) - 1);
 
 	q_snprintf (name, sizeof (name), "%s/condump.txt", com_gamedir);
 	COM_CreatePath (name);
@@ -173,20 +174,20 @@ static void Con_Dump_f (void)
 	for (l = con_current - con_totallines + 1; l <= con_current; l++)
 	{
 		line = con_text + (l % con_totallines) * con_linewidth;
-		for (x = 0; x < con_linewidth; x++)
+		for (x = 0; x < linewidth; x++)
 			if (line[x] != ' ')
 				break;
-		if (x != con_linewidth)
+		if (x != linewidth)
 			break;
 	}
 
 	// write the remaining lines
-	buffer[con_linewidth] = 0;
+	buffer[linewidth] = 0;
 	for (; l <= con_current; l++)
 	{
 		line = con_text + (l % con_totallines) * con_linewidth;
-		strncpy (buffer, line, con_linewidth);
-		for (x = con_linewidth - 1; x >= 0; x--)
+		strncpy (buffer, line, linewidth);
+		for (x = linewidth - 1; x >= 0; x--)
 		{
 			if (buffer[x] == ' ')
 				buffer[x] = 0;
@@ -920,6 +921,14 @@ void BuildTabList (const char *partial)
 			AddToTabList (alias->name, "alias");
 }
 
+static char *Con_FindTabStart (void)
+{
+	char *c = key_lines[edit_line] + key_linepos - 1; // start one space left of cursor
+	while (*c != ' ' && *c != '\"' && *c != ';' && c != key_lines[edit_line])
+		c--;
+	return c + 1; // start 1 char after the separator we just found
+}
+
 /*
 ============
 Con_TabComplete -- johnfitz
@@ -938,14 +947,8 @@ void Con_TabComplete (void)
 		return;
 
 	// get partial string (space -> cursor)
-	if (!key_tabpartial[0]) // first time through, find new insert point. (Otherwise, use previous.)
-	{
-		// work back from cursor until you find a space, quote, semicolon, or prompt
-		c = key_lines[edit_line] + key_linepos - 1; // start one space left of cursor
-		while (*c != ' ' && *c != '\"' && *c != ';' && c != key_lines[edit_line])
-			c--;
-		c++; // start 1 char after the separator we just found
-	}
+	if (!key_tabpartial[0] || !c) // first time through, find new insert point. (Otherwise, use previous.)
+		c = Con_FindTabStart ();
 	for (i = 0; c + i < key_lines[edit_line] + key_linepos; i++)
 		partial[i] = c[i];
 	partial[i] = 0;

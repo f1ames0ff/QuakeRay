@@ -202,16 +202,21 @@ static int SendMessageNext (qsocket_t *sock)
 	unsigned int dataLen;
 	unsigned int eom;
 
+	if (sock->sendMessageLength < 0 || sock->max_datagram < 0)
+		return -1;
+
 	if (sock->sendMessageLength <= sock->max_datagram)
 	{
-		dataLen = sock->sendMessageLength;
+		dataLen = (unsigned int)sock->sendMessageLength;
 		eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = sock->max_datagram;
+		dataLen = (unsigned int)sock->max_datagram;
 		eom = 0;
 	}
+	if (dataLen > sizeof (packetBuffer.data))
+		dataLen = (unsigned int)sizeof (packetBuffer.data);
 	packetLen = NET_HEADERSIZE + dataLen;
 
 	packetBuffer.length = BigLong (packetLen | (NETFLAG_DATA | eom));
@@ -234,16 +239,21 @@ static int ReSendMessage (qsocket_t *sock)
 	unsigned int dataLen;
 	unsigned int eom;
 
+	if (sock->sendMessageLength < 0 || sock->max_datagram < 0)
+		return -1;
+
 	if (sock->sendMessageLength <= sock->max_datagram)
 	{
-		dataLen = sock->sendMessageLength;
+		dataLen = (unsigned int)sock->sendMessageLength;
 		eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = sock->max_datagram;
+		dataLen = (unsigned int)sock->max_datagram;
 		eom = 0;
 	}
+	if (dataLen > sizeof (packetBuffer.data))
+		dataLen = (unsigned int)sizeof (packetBuffer.data);
 	packetLen = NET_HEADERSIZE + dataLen;
 
 	packetBuffer.length = BigLong (packetLen | (NETFLAG_DATA | eom));

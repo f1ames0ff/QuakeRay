@@ -42,10 +42,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define WADFILENAME "gfx.wad" // johnfitz -- filename is now hard-coded for honesty
 
+#define QPIC_GLPIC_STORAGE 32
+
 typedef struct
 {
 	int  width, height;
-	byte data[4]; // variably sized
+	byte data[QPIC_GLPIC_STORAGE]; // variably sized (sized to hold embedded glpic_t)
 } qpic_t;
 
 typedef struct

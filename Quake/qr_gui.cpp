@@ -190,8 +190,9 @@ void ClearInputStateNow (void)
 		static const Uint8 kButtons[] = {
 			SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT, SDL_BUTTON_MIDDLE, SDL_BUTTON_X1, SDL_BUTTON_X2,
 		};
-		SDL_Event up = {};
-		up.type = SDL_MOUSEBUTTONUP;
+		SDL_Event up;
+		up.button = {};
+		up.button.type = SDL_MOUSEBUTTONUP;
 		up.button.windowID = g_window_id;
 		up.button.state = SDL_RELEASED;
 		for (Uint8 btn : kButtons)

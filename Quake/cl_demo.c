@@ -311,7 +311,7 @@ void CL_Record_Prespawn (void)
 	for (idx = 0; idx < cl.num_entities; idx++)
 	{
 		entity_state_t *state = &cl.entities[idx].baseline;
-		if (!memcmp (state, &nullentitystate, sizeof (entity_state_t)))
+		if (EntityState_Equals (state, &nullentitystate))
 			continue; // no need
 		MSG_WriteStaticOrBaseLine (&net_message, idx, state, cl.protocol_pext2, cl.protocol, cl.protocolflags);
 

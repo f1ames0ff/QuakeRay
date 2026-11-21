@@ -305,12 +305,21 @@ static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
 {
 	char *tmp;
 
+	if (dst == NULL || dstsize < 2)
+	{
+		Sys_Error ("Couldn't determine current directory");
+		return;
+	}
+
 	if (realpath (argv0, dst) == NULL)
 	{
 		perror ("realpath");
 		if (getcwd (dst, dstsize - 1) == NULL)
 		_fail:
+		{
 			Sys_Error ("Couldn't determine current directory");
+			return;
+		}
 	}
 	else
 	{
@@ -330,8 +339,11 @@ static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
 {
 	char *tmp;
 
-	if (getcwd (dst, dstsize - 1) == NULL)
+	if (dst == NULL || dstsize < 2 || getcwd (dst, dstsize - 1) == NULL)
+	{
 		Sys_Error ("Couldn't determine current directory");
+		return;
+	}
 
 	tmp = dst;
 	while (*tmp != 0)

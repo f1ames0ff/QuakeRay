@@ -276,8 +276,22 @@ static int RT_Dtal_EnsureKeyTable(rt_dtal_builder_t *builder, int groupCount)
     return 1;
 }
 
+static int RT_Dtal_KeyEquals(const rt_dtal_key_t *a, const rt_dtal_key_t *b)
+{
+    return a->emissionKey == b->emissionKey &&
+           a->serial == b->serial &&
+           a->styleKey == b->styleKey &&
+           a->axis == b->axis &&
+           a->cell[0] == b->cell[0] &&
+           a->cell[1] == b->cell[1] &&
+           a->cell[2] == b->cell[2];
+}
+
 static int RT_Dtal_KeyTableInsert(rt_dtal_builder_t *builder, const rt_dtal_key_t *key, int groupIndex, int *outIndex)
 {
+    if (builder == NULL || builder->keyTable == NULL || builder->keyTableCapacity <= 0)
+        return -1;
+
     const uint64_t hash = RT_Dtal_HashBytes(key, (int)sizeof(*key));
     const uint32_t mask = (uint32_t)builder->keyTableCapacity - 1u;
     uint32_t       slot = (uint32_t)(hash >> 20) & mask;
@@ -304,7 +318,7 @@ static int RT_Dtal_KeyTableInsert(rt_dtal_builder_t *builder, const rt_dtal_key_
         stored.cell[1] = g->cell[1];
         stored.cell[2] = g->cell[2];
 
-        if (memcmp(&stored, key, sizeof(*key)) == 0)
+        if (RT_Dtal_KeyEquals(&stored, key))
         {
             if (outIndex != NULL)
                 *outIndex = (int)entry - 1;
@@ -435,6 +449,14 @@ static int RT_Dtal_AddMember(rt_dtal_builder_t *builder, int groupIndex, const r
 static int RT_Dtal_AddSingleton(rt_dtal_builder_t *builder, const rt_dtal_input_t *input, int index, double spacing)
 {
     rt_dtal_clipvert_t poly[RT_DTAL_MAX_VERTS];
+    memset(poly, 0, sizeof(poly));
+
+    if (input->numVerts < 3 || input->numVerts > RT_DTAL_MAX_VERTS)
+    {
+        builder->result.diag.droppedDegenerate++;
+        builder->result.diag.droppedArea += (double)input->area;
+        return 1;
+    }
 
     for (int i = 0; i < input->numVerts; i++)
     {

@@ -2061,9 +2061,11 @@ byte *COM_LoadFile (const char *path, unsigned int *path_id)
 
 byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 {
-	FILE *f;
-	byte *data;
-	long  len, actuallen;
+	FILE  *f;
+	byte  *data;
+	long   len;
+	size_t got;
+	int    err;
 
 	// ericw -- this is used by Host_Loadgame_f. Translate CRLF to LF on load games,
 	// othewise multiline messages have a garbage character at the end of each line.
@@ -2073,23 +2075,33 @@ byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 
 	len = COM_filelength (f);
 	if (len < 0)
+	{
+		fclose (f);
 		return NULL;
+	}
 
-	data = (byte *)Mem_Alloc (len + 1);
+	data = (byte *)Mem_Alloc ((size_t)len + 1);
 	if (data == NULL)
+	{
+		fclose (f);
 		return NULL;
+	}
 
-	// (actuallen < len) if CRLF to LF translation was performed
-	actuallen = fread (data, 1, len, f);
-	if (ferror (f))
+	// (got < len) if CRLF to LF translation was performed
+	got = fread (data, 1, (size_t)len, f);
+	err = ferror (f);
+	fclose (f);
+	if (err)
 	{
 		Mem_Free (data);
 		return NULL;
 	}
-	data[actuallen] = '\0';
+	if (got > (size_t)len)
+		got = (size_t)len;
+	data[got] = '\0';
 
 	if (len_out != NULL)
-		*len_out = actuallen;
+		*len_out = (long)got;
 	return data;
 }
 
@@ -2248,7 +2260,7 @@ qboolean COM_GameDirMatches (const char *tdirs)
 
 qboolean COM_ModForbiddenChars (const char *p)
 {
-	return !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
+	return !p || !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
 }
 
 qboolean COM_PathMatches (const char *a, const char *b)
@@ -2391,6 +2403,14 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 	}
 }
 
+static void COM_SetActiveGameDir (const char *dir)
+{
+	if (com_numbasedirs <= 0 || com_numbasedirs > MAX_BASEDIRS)
+		return;
+	q_snprintf (com_gamedir, sizeof (com_gamedir), "%s/%s", com_basedirs[com_numbasedirs - 1], dir);
+	Sys_TryMkdir (com_gamedir);
+}
+
 /*
 =================
 COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
@@ -2476,8 +2496,7 @@ static void COM_AddGameDirectory (const char *dir)
 		}
 	}
 
-	q_strlcpy (com_gamedir, va ("%s/%s", com_basedirs[com_numbasedirs - 1], dir), sizeof (com_gamedir));
-	Sys_TryMkdir (com_gamedir);
+	COM_SetActiveGameDir (dir);
 }
 
 void COM_ResetGameDirectories (const char *newdirs)

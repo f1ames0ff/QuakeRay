@@ -78,6 +78,8 @@ typedef struct
 	float        sl, tl, sh, th;
 } glpic_t;
 
+COMPILE_TIME_ASSERT (qpic_glpic_fit, sizeof (glpic_t) <= QPIC_GLPIC_STORAGE);
+
 //==============================================================================
 //
 //  PIC CACHING
@@ -88,7 +90,6 @@ typedef struct cachepic_s
 {
 	char   name[MAX_QPATH];
 	qpic_t pic;
-	byte   padding[32]; // for appended glpic
 } cachepic_t;
 
 #define MAX_CACHED_PICS 512 // Spike -- increased to avoid csqc issues.
@@ -258,7 +259,8 @@ qpic_t *Draw_PicFromWad2 (const char *name, unsigned int texflags)
 
 	menu_numcachepics++;
 	strcpy (pic->name, name);
-	pic->pic = *p;
+	pic->pic.width = p->width;
+	pic->pic.height = p->height;
 	memcpy (pic->pic.data, &gl, sizeof (glpic_t));
 
 	return &pic->pic;
@@ -385,7 +387,7 @@ qpic_t *Draw_MakePic (const char *name, int width, int height, byte *data)
 	qpic_t *pic;
 	glpic_t gl;
 
-	pic = (qpic_t *)Mem_Alloc (sizeof (qpic_t) - 4 + sizeof (glpic_t));
+	pic = (qpic_t *)Mem_Alloc (sizeof (qpic_t));
 	pic->width = width;
 	pic->height = height;
 
