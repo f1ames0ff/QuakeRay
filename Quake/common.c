@@ -2096,12 +2096,9 @@ byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 		Mem_Free (data);
 		return NULL;
 	}
-	if (got > (size_t)len)
-		got = (size_t)len;
-	data[got] = '\0';
-
+	/* Mem_Alloc zero-initializes (size_t)len + 1 bytes, so data[got] is already '\0'. */
 	if (len_out != NULL)
-		*len_out = (long)got;
+		*len_out = (got > (size_t)len) ? len : (long)got;
 	return data;
 }
 

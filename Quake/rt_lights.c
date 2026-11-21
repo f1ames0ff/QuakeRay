@@ -1003,12 +1003,9 @@ static char *rt_light_read_pack_file(const pack_t *pak, const char *filename, in
         buf = (char *)Mem_Alloc((size_t)filelen + 1);
         got = fread(buf, 1, (size_t)filelen, f);
         fclose(f);
-        if (got > (size_t)filelen)
-            got = (size_t)filelen;
-        buf[got] = '\0';
         if (outLen)
         {
-            *outLen = (int)got;
+            *outLen = (got > (size_t)filelen) ? filelen : (int)got;
         }
         return buf;
     }
@@ -2259,11 +2256,8 @@ static qboolean rt_custom_load_stream(FILE *f, const char *level)
 
     text = (char *)Mem_Alloc((size_t)size + 1);
     got = fread(text, 1, (size_t)size, f);
-    if (got > (size_t)size)
-        got = (size_t)size;
-    text[got] = 0;
 
-    found = rt_custom_load_text(text, (int)got, level);
+    found = rt_custom_load_text(text, (got > (size_t)size) ? (int)size : (int)got, level);
     Mem_Free(text);
     return found;
 }

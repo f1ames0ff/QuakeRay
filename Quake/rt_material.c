@@ -1070,11 +1070,8 @@ static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_i
     buf = (char *)Mem_Alloc((size_t)len + 1);
     got = fread(buf, 1, (size_t)len, f);
     fclose(f);
-    if (got > (size_t)len)
-        got = (size_t)len;
-    buf[got] = 0;
 
-    count = rt_mat_parse_yaml(buf, (int)got, path, dest, max_items);
+    count = rt_mat_parse_yaml(buf, (got > (size_t)len) ? (int)len : (int)got, path, dest, max_items);
     Mem_Free(buf);
     return count;
 }
@@ -1335,12 +1332,9 @@ static char *rt_mat_read_pack_file(const pack_t *pak, const char *filename, int 
         buf = (char *)Mem_Alloc((size_t)filelen + 1);
         got = fread(buf, 1, (size_t)filelen, f);
         fclose(f);
-        if (got > (size_t)filelen)
-            got = (size_t)filelen;
-        buf[got] = '\0';
         if (outLen)
         {
-            *outLen = (int)got;
+            *outLen = (got > (size_t)filelen) ? filelen : (int)got;
         }
         return buf;
     }
