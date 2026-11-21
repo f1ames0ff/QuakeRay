@@ -47,11 +47,11 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:hal
 
 ## Activating SonarQube Cloud
 
-Both `.github/workflows/quality-linux.yml` workflows skip Sonar cleanly with a `::notice::` until `SONAR_TOKEN` is added (so CI stays green immediately, respecting `allowed_actions: local_only` with zero marketplace `uses:` actions).
+Both `.github/workflows/quality-linux.yml` workflows support **Secretless analysis** via GitHub OIDC (no static `SONAR_TOKEN` secret required; `SONAR_TOKEN` remains supported as an optional fallback) and keep **zero marketplace `uses:` actions** (`allowed_actions: local_only`). Both `.sonarcloud.properties` (Automatic Analysis) and `sonar-project.properties` (CI scanner) are present so vendored trees and cross-repo submodule copies stay excluded.
 
-1. Sign in at https://sonarcloud.io with GitHub, import `f1ames0ff/QuakeRay` and `f1ames0ff/QuakeRaySDK`, and select **With GitHub Actions** (**Previous Version** / Clean as You Code new-code definition).
-2. Add repository secret `SONAR_TOKEN` in GitHub (`Settings -> Secrets and variables -> Actions -> New repository secret`) for both `f1ames0ff/QuakeRay` and `f1ames0ff/QuakeRaySDK`.
-3. Optionally set repository variables `SONAR_ORGANIZATION` and `SONAR_PROJECT_KEY` if they differ from `f1ames0ff` / `f1ames0ff_QuakeRay` (`f1ames0ff_QuakeRaySDK`).
+1. In SonarQube Cloud Organization settings (**Administration -> Analysis method**), enable **Secretless analysis for GitHub Actions** (`f1ames0ff`).
+2. In each project's settings (`f1ames0ff_QuakeRay` and `f1ames0ff_QuakeRaySDK`, **Administration -> Analysis Method**), turn **Automatic Analysis** **OFF** so CI-based scanning with `compile_commands.json` (`Clean as You Code`) runs without conflict.
+3. Optionally set repository variables `SONAR_ORGANIZATION`, `SONAR_PROJECT_KEY`, or `SONAR_REGION` (`eu`, `us`, `au`) if they differ from the defaults (`f1ames0ff`, `f1ames0ff_QuakeRay` / `f1ames0ff_QuakeRaySDK`, `eu`).
 
 ## Recommended Branch Protection Checks
 

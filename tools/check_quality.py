@@ -36,9 +36,9 @@ C_CPP_EXTS = C_CPP_SOURCE_EXTS | C_CPP_HEADER_EXTS
 PY_EXTS = {".py"}
 
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-CLANG_TIDY_RE = re.compile(r"^(.+?):(\d+):(\d+):\s+(warning|error):\s+(.+?)(?:\s+\[([^\]]+)\])?$")
-CPPCHECK_RE = re.compile(r"^(.+?):(\d+):([^:]+):([^:]+):(.*)$")
-RUFF_RE = re.compile(r"^(.+?):(\d+):\d+:\s+([A-Z]\d+)\s+(.*)$")
+CLANG_TIDY_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):(\d+):[ \t]+(warning|error):[ \t]+([^\r\n]+)$")
+CPPCHECK_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):([^:\r\n]+):([^:\r\n]+):([^\r\n]*)$")
+RUFF_RE = re.compile(r"^((?:[A-Za-z]:)?[^:\r\n]+):(\d+):\d+:[ \t]+([A-Z]\d+)[ \t]+([^\r\n]+)$")
 
 
 @dataclass(frozen=True)
@@ -210,6 +210,17 @@ def find_target_tus(changed_files: list[str], compile_db: dict[str, dict]) -> li
     return tus
 
 
+def _split_clang_tidy_rest(rest: str) -> tuple[str, str]:
+    """Split trailing `[check-name]` suffix from a clang-tidy diagnostic message."""
+    if rest.endswith("]"):
+        idx = rest.rfind(" [")
+        if idx != -1:
+            rule = rest[idx + 2 : -1]
+            if rule and "[" not in rule and "]" not in rule:
+                return rest[:idx].rstrip(), rule
+    return rest, "clang-tidy"
+
+
 def parse_clang_tidy_output(output: str, repo_root: Path, changed_lines: dict[str, set[int]]) -> list[Finding]:
     """Filter clang-tidy warnings/errors strictly to changed lines in changed files."""
     findings: list[Finding] = []
@@ -218,12 +229,12 @@ def parse_clang_tidy_output(output: str, repo_root: Path, changed_lines: dict[st
         match = CLANG_TIDY_RE.match(raw_line.strip())
         if not match:
             continue
-        file_str, line_str, _col, severity, msg, rule = match.groups()
+        file_str, line_str, _col, severity, rest = match.groups()
         rel = norm_rel(file_str, repo_root)
         line_no = int(line_str)
         if rel not in changed_lines or line_no not in changed_lines[rel]:
             continue
-        rule_name = rule or "clang-tidy"
+        msg, rule_name = _split_clang_tidy_rest(rest)
         key = (rel, line_no, rule_name, msg)
         if key in seen:
             continue
@@ -278,7 +289,8 @@ def extract_cppcheck_flags(entry: dict, repo_root: Path) -> list[str]:
         tokens = [str(t) for t in entry["arguments"]]
     else:
         tokens = shlex.split(entry.get("command", ""))
-    work_dir = Path(entry.get("directory") or repo_root)
+    raw_dir = entry.get("directory")
+    work_dir = str(raw_dir) if isinstance(raw_dir, str) and raw_dir else str(repo_root)
     flags: list[str] = []
     i = 0
     while i < len(tokens):
@@ -286,7 +298,7 @@ def extract_cppcheck_flags(entry: dict, repo_root: Path) -> list[str]:
         if tok in {"-I", "-isystem", "-D", "-U"} and i + 1 < len(tokens):
             val = tokens[i + 1]
             if tok in {"-I", "-isystem"}:
-                val = str((work_dir / val).resolve())
+                val = os.path.normpath(os.path.join(work_dir, val))
                 flags.extend(["-I", val])
             else:
                 flags.extend([tok, val])
@@ -295,7 +307,7 @@ def extract_cppcheck_flags(entry: dict, repo_root: Path) -> list[str]:
         if tok.startswith(("-I", "-isystem")):
             raw_path = tok[2:] if tok.startswith("-I") else tok[8:]
             if raw_path:
-                flags.extend(["-I", str((work_dir / raw_path).resolve())])
+                flags.extend(["-I", os.path.normpath(os.path.join(work_dir, raw_path))])
         elif tok.startswith(("-D", "-U")):
             flags.append(tok)
         elif tok.startswith("-std="):
