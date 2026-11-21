@@ -93,6 +93,18 @@ class CheckQualityTests(unittest.TestCase):
         findings = cq.parse_ruff_output(out, root, {"tools/helper.py": {4}})
         self.assertEqual([(f.line, f.rule) for f in findings], [(4, "F401"), (88, "F821")])
 
+    def test_windows_drive_prefix_and_ref_validation(self) -> None:
+        self.assertEqual(
+            cq._split_diag_line("C:\\repo\\Quake\\rt_light.c:12:3: warning: msg [r]", 5),
+            ["C:\\repo\\Quake\\rt_light.c", "12", "3", " warning", " msg [r]"],
+        )
+        repo_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(cq.resolve_base_ref(repo_root, "HEAD"), "HEAD")
+        with self.assertRaises(ValueError):
+            cq.resolve_base_ref(repo_root, "--upload-pack=evil")
+        with self.assertRaises(ValueError):
+            cq.resolve_base_ref(repo_root, "HEAD..master")
+
 
 if __name__ == "__main__":
     unittest.main()
