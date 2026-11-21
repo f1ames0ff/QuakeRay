@@ -9,8 +9,7 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +25,9 @@ jobs:
   quality:
     name: ASan/UBSan + Static Analysis + Tests + Sonar
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out repository and submodules with full history
@@ -57,7 +59,8 @@ jobs:
             cmake ninja-build clang clang-tidy cppcheck \
             glslang-tools libvulkan-dev libsdl2-dev libopenal-dev libx11-dev \
             python3 python3-pip curl unzip tar ca-certificates
-          python3 -m pip install --break-system-packages ruff lizard uv
+          python3 -m pip install --break-system-packages --only-binary :all: \
+            ruff==0.17.6 lizard==1.26.1 pygments==2.21.0 pathspec==1.1.1 uv==0.13.9
 
       - name: Install pinned Vulkan headers and Linux DXC
         shell: bash
@@ -66,12 +69,12 @@ jobs:
           deps="$RUNNER_TEMP/qray-deps"
           mkdir -p "$deps/vulkan-headers" "$deps/dxc"
 
-          curl --location --fail --silent --show-error --retry 3 \
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error --retry 3 \
             "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/${VULKAN_HEADERS_TAG}.tar.gz" \
             -o "$deps/vk.tar.gz"
           tar -xzf "$deps/vk.tar.gz" --strip-components=1 -C "$deps/vulkan-headers"
 
-          curl --location --fail --silent --show-error --retry 3 \
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error --retry 3 \
             "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${QR_DXC_VERSION}/${QR_DXC_ASSET}" \
             -o "$deps/dxc.tar.gz"
           tar -xzf "$deps/dxc.tar.gz" -C "$deps/dxc"
@@ -124,8 +127,8 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest discover -s tools -p "test_*.py" -v
           python3 -B -m unittest discover -s tests/perf -p "test_*.py" -v
-          uv sync --locked --project tools/quakeray_mcp --python 3.10
-          uv run --offline --frozen --python 3.10 --project tools/quakeray_mcp python -B -m unittest discover -s tools/quakeray_mcp/tests -p "test_*.py" -q
+          uv sync --locked --no-build --no-install-project --project tools/quakeray_mcp --python 3.10
+          PYTHONPATH=tools/quakeray_mcp/src uv run --no-build --no-sync --offline --frozen --python 3.10 --project tools/quakeray_mcp python -B -m unittest discover -s tools/quakeray_mcp/tests -p "test_*.py" -q
 
       - name: Verify HLSL matrix reads and compile all shaders
         shell: bash
@@ -168,6 +171,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+          SONAR_REGION: ${{ vars.SONAR_REGION }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.head_ref }}
@@ -175,22 +179,156 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          sonar_org="${SONAR_ORGANIZATION:-f1ames0ff}"
+          sonar_proj="${SONAR_PROJECT_KEY:-f1ames0ff_QuakeRay}"
+
           if [ -z "${SONAR_TOKEN:-}" ]; then
-            echo "::notice::SONAR_TOKEN secret is not configured; skipping SonarQube Cloud scan."
-            exit 0
+            if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+              echo "::notice::GitHub OIDC token unavailable (e.g. fork PR) and SONAR_TOKEN not set; skipping SonarQube Cloud scan."
+              exit 0
+            fi
+
+            oidc_json="$RUNNER_TEMP/sonar_oidc.json"
+            python3 -B - "$oidc_json" "$sonar_proj" <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          REGIONS = {
+              "eu": ("https://api.sonarcloud.io", "https://sonarcloud.io"),
+              "us": ("https://api.sonarqube.us", "https://sonarqube.us"),
+              "au": ("https://api.sonarqube.au", "https://sonarqube.au"),
+          }
+
+          def write_json(path: str, payload: dict) -> None:
+              fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+              with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                  json.dump(payload, fh)
+
+          def get_github_oidc_jwt(req_url: str, req_token: str, audience: str) -> str:
+              parsed = urllib.parse.urlparse(req_url)
+              if parsed.scheme != "https" or not parsed.netloc:
+                  raise RuntimeError("Invalid ACTIONS_ID_TOKEN_REQUEST_URL scheme")
+              query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+              query.append(("audience", audience))
+              full_url = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
+              req = urllib.request.Request(
+                  full_url,
+                  headers={
+                      "Authorization": f"Bearer {req_token}",
+                      "Accept": "application/json; api-version=2.0",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+              token = data.get("value")
+              if not token:
+                  raise RuntimeError("GitHub OIDC response did not contain a token value")
+              return token
+
+          def exchange_oidc_token(api_url: str, audience: str, subject_token: str, project_key: str) -> dict:
+              endpoint = f"{api_url}/authentication/token"
+              form = {
+                  "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "subject_token": subject_token,
+                  "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+                  "audience": audience,
+              }
+              if project_key:
+                  form["project_key"] = project_key
+              body_bytes = urllib.parse.urlencode(form).encode("utf-8")
+              req = urllib.request.Request(
+                  endpoint,
+                  data=body_bytes,
+                  method="POST",
+                  headers={"Content-Type": "application/x-www-form-urlencoded"},
+              )
+              for attempt in range(1, 4):
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          return json.loads(resp.read().decode("utf-8"))
+                  except urllib.error.HTTPError as err:
+                      raw = err.read().decode("utf-8", errors="replace")
+                      try:
+                          parsed = json.loads(raw)
+                      except json.JSONDecodeError:
+                          parsed = {}
+                      detail = parsed.get("error_description") or parsed.get("error") or f"HTTP {err.code}"
+                      if err.code in (403, 404):
+                          print(
+                              f"::warning::SonarQube Cloud OIDC exchange returned HTTP {err.code} ({detail}). "
+                              "Enable 'Secretless analysis for GitHub Actions' in SonarQube Cloud Organization -> "
+                              "Administration -> Analysis method; skipping CLI scan."
+                          )
+                          return {"_skip": True}
+                      if err.code >= 500 and attempt < 3:
+                          time.sleep(attempt)
+                          continue
+                      raise RuntimeError(f"SonarQube Cloud OIDC exchange failed with HTTP {err.code}: {detail}") from err
+                  except urllib.error.URLError as err:
+                      if attempt < 3:
+                          time.sleep(attempt)
+                          continue
+                      raise RuntimeError(f"SonarQube Cloud OIDC exchange failed: {err}") from err
+              raise RuntimeError("SonarQube Cloud OIDC exchange exhausted retries")
+
+          out_path, default_proj = sys.argv[1], sys.argv[2]
+          region = (os.environ.get("SONAR_REGION") or "eu").strip().lower() or "eu"
+          if region not in REGIONS:
+              raise RuntimeError(f"Unsupported SONAR_REGION: {region!r}")
+          api_url, audience = REGIONS[region]
+          jwt_token = get_github_oidc_jwt(
+              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"],
+              os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+              audience,
+          )
+          exchanged = exchange_oidc_token(api_url, audience, jwt_token, default_proj)
+          if exchanged.get("_skip"):
+              write_json(out_path, {"skip": True})
+              raise SystemExit(0)
+          access_token = exchanged.get("access_token")
+          if not access_token:
+              raise RuntimeError("SonarQube Cloud OIDC exchange succeeded but returned no access_token")
+          print(f"::add-mask::{access_token}", flush=True)
+          write_json(
+              out_path,
+              {
+                  "skip": False,
+                  "token": access_token,
+                  "org": exchanged.get("organization") or "",
+                  "proj": exchanged.get("project_key") or "",
+              },
+          )
+          PY
+
+            if [ "$(python3 -B -c 'import json,sys; print(1 if json.load(open(sys.argv[1])).get("skip") else 0)' "$oidc_json")" = "1" ]; then
+              rm -f "$oidc_json"
+              exit 0
+            fi
+            SONAR_TOKEN="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"], end="")' "$oidc_json")"
+            export SONAR_TOKEN
+            resolved_org="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("org",""), end="")' "$oidc_json")"
+            resolved_proj="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1])).get("proj",""), end="")' "$oidc_json")"
+            rm -f "$oidc_json"
+            sonar_org="${resolved_org:-$sonar_org}"
+            sonar_proj="${resolved_proj:-$sonar_proj}"
           fi
 
           cli_dir="$RUNNER_TEMP/sonar-scanner"
           mkdir -p "$cli_dir"
-          curl --location --fail --silent --show-error --retry 3 \
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error --retry 3 \
             "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_CLI_VERSION}-linux-x64.zip" \
             -o "$cli_dir/sonar.zip"
           unzip -q "$cli_dir/sonar.zip" -d "$cli_dir"
           scanner="$(find "$cli_dir" -maxdepth 3 -type f -name sonar-scanner | head -n 1)"
 
           sonar_args=(
-            "-Dsonar.organization=${SONAR_ORGANIZATION:-f1ames0ff}"
-            "-Dsonar.projectKey=${SONAR_PROJECT_KEY:-f1ames0ff_QuakeRay}"
+            "-Dsonar.organization=${sonar_org}"
+            "-Dsonar.projectKey=${sonar_proj}"
             "-Dsonar.qualitygate.wait=true"
           )
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -203,4 +341,15 @@ jobs:
             sonar_args+=("-Dsonar.branch.name=${REF_NAME}")
           fi
 
-          "$scanner" "${sonar_args[@]}"
+          set +e
+          out="$("$scanner" "${sonar_args[@]}" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -qi "Automatic Analysis is enabled"; then
+              echo "::warning::SonarQube Cloud Automatic Analysis is still enabled on this project; disable Automatic Analysis in Project Administration -> Analysis Method so CI Secretless analysis with compile_commands.json runs."
+              exit 0
+            fi
+            exit "$rc"
+          fi
