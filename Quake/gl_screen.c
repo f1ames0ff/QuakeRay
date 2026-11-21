@@ -1136,8 +1136,9 @@ static void SCR_SetupFrame (void *unused)
 SCR_DrawDone
 ==================
 */
-static void SCR_DrawDone (gl_end_rendering_context_t **context)
+static void SCR_DrawDone (void *payload)
 {
+	gl_end_rendering_context_t **context = (gl_end_rendering_context_t **) payload;
 	GL_CaptureEndRenderingSnapshot (*context);
 	r_framecount++;
 }
