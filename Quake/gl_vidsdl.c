@@ -5506,6 +5506,7 @@ static void VID_Menu_DrawUpscaler (cb_context_t *cbx, int y)
 	{
 	case UPSCALER_FSR31: name = "AMD FSR 3.1"; break;
 	case UPSCALER_DLSS:  name = "Nvidia DLSS"; break;
+	default:             break;
 	}
 	M_Print (cbx, 184, y, name);
 }
