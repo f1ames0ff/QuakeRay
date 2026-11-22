@@ -2140,6 +2140,22 @@ typedef struct rt_emissive_params_s
 	float      glow_mean;
 } rt_emissive_params_t;
 
+static void RT_FillDtalParentLightShafts (QrDtalGroupUploadInfo *parent, const rt_emissive_params_t *params)
+{
+	parent->lightShafts = params->light_shafts ? 1 : 0;
+	parent->lightShaftsPower = params->light_shafts_power;
+	parent->lightShaftsDistance = q_max (0.0f, params->light_shafts_distance);
+	parent->lightShaftsFalloff = q_max (0.01f, params->light_shafts_falloff);
+}
+
+static void RT_FillAreaLightShafts (QrTexturedAreaLightUploadInfo *li, const rt_emissive_params_t *params)
+{
+	li->lightShafts = params->light_shafts ? 1 : 0;
+	li->lightShaftsPower = params->light_shafts_power;
+	li->lightShaftsDistance = q_max (0.0f, params->light_shafts_distance);
+	li->lightShaftsFalloff = q_max (0.01f, params->light_shafts_falloff);
+}
+
 static qboolean RT_EmitEmissiveProxyLight (uint64_t uniqueID, const char *name, const vec3_t center,
                                            const vec3_t normal, const vec3_t offset, float area,
                                            const vec3_t color, const rt_emissive_params_t *params,
@@ -3260,10 +3276,7 @@ static void RT_DtalGroups_FillUpload (void)
 		parent->angleInner = source->params.angleInner;
 		parent->angleOuter = source->params.angleOuter;
 		parent->projector = source->params.projector ? 1.0f : 0.0f;
-		parent->lightShafts = source->params.light_shafts ? 1 : 0;
-		parent->lightShaftsPower = source->params.light_shafts_power;
-		parent->lightShaftsDistance = q_max (0.0f, source->params.light_shafts_distance);
-		parent->lightShaftsFalloff = q_max (0.01f, source->params.light_shafts_falloff);
+		RT_FillDtalParentLightShafts (parent, &source->params);
 		parent->reach = source->reach;
 		parent->estimatedPower = group->refPower;
 		parent->boundsRadius = group->boundsRadius;
@@ -3571,10 +3584,7 @@ static void RT_DtalGroups_UpdateFrame (void)
 		parent->angleInner = params.angleInner;
 		parent->angleOuter = params.angleOuter;
 		parent->projector = params.projector ? 1.0f : 0.0f;
-		parent->lightShafts = params.light_shafts ? 1 : 0;
-		parent->lightShaftsPower = params.light_shafts_power;
-		parent->lightShaftsDistance = q_max (0.0f, params.light_shafts_distance);
-		parent->lightShaftsFalloff = q_max (0.01f, params.light_shafts_falloff);
+		RT_FillDtalParentLightShafts (parent, &params);
 		parent->estimatedPower = group->refPower;
 
 		if (rt_dtal_group_proxy != NULL && rt_dtal_group_proxy[gi] >= 0 &&
@@ -4558,10 +4568,7 @@ static int RT_UploadAliasEmissivePieces (const rt_dtal_piece_t *pieces, int nump
 		li.angleInner = params->angleInner;
 		li.angleOuter = params->angleOuter;
 		li.projector = params->projector ? 1.0f : 0.0f;
-		li.lightShafts = params->light_shafts ? 1 : 0;
-		li.lightShaftsPower = params->light_shafts_power;
-		li.lightShaftsDistance = q_max (0.0f, params->light_shafts_distance);
-		li.lightShaftsFalloff = q_max (0.01f, params->light_shafts_falloff);
+		RT_FillAreaLightShafts (&li, params);
 		li.fit       = 1;
 		li.isStatic  = 0;
 
@@ -5163,10 +5170,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	light_info.angleInner = params.angleInner;
 	light_info.angleOuter = params.angleOuter;
 	light_info.projector = params.projector ? 1.0f : 0.0f;
-	light_info.lightShafts = params.light_shafts ? 1 : 0;
-	light_info.lightShaftsPower = params.light_shafts_power;
-	light_info.lightShaftsDistance = q_max (0.0f, params.light_shafts_distance);
-	light_info.lightShaftsFalloff = q_max (0.01f, params.light_shafts_falloff);
+	RT_FillAreaLightShafts (&light_info, &params);
 	light_info.area      = total_area;
 	light_info.fit       = 0;
 	light_info.isStatic  = is_static_geom ? 1 : 0;
@@ -6239,10 +6243,7 @@ void RT_UploadAllWorldModelLights (void)
 				li->angleInner = params.angleInner;
 				li->angleOuter = params.angleOuter;
 				li->projector = params.projector ? 1.0f : 0.0f;
-				li->lightShafts = params.light_shafts ? 1 : 0;
-				li->lightShaftsPower = params.light_shafts_power;
-				li->lightShaftsDistance = q_max (0.0f, params.light_shafts_distance);
-				li->lightShaftsFalloff = q_max (0.01f, params.light_shafts_falloff);
+				RT_FillAreaLightShafts (li, &params);
 				VectorCopy (params.color, li->color.data);
 			}
 			else

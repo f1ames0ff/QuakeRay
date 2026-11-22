@@ -552,6 +552,20 @@ static int rt_mat_parse_emissive_blend(const char *value)
     return (int)v;
 }
 
+static void rt_mat_set_light_shaft_or_warn(rt_material_t *mat, const char *key, const char *value)
+{
+    if (!q_strcasecmp(key, "light_shafts"))
+        mat->light_shafts = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "light_shafts_power"))
+        mat->light_shafts_power = CLAMP(0.0f, (float)atof(value), 16.0f);
+    else if (!q_strcasecmp(key, "light_shafts_distance"))
+        mat->light_shafts_distance = CLAMP(0.0f, (float)atof(value), 25.0f);
+    else if (!q_strcasecmp(key, "light_shafts_falloff"))
+        mat->light_shafts_falloff = CLAMP(0.0f, (float)atof(value), 4.0f);
+    else
+        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+}
+
 static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char *value)
 {
     if (!q_strcasecmp(key, "bump_scale"))
@@ -610,14 +624,6 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
     }
     else if (!q_strcasecmp(key, "light_projector") || !q_strcasecmp(key, "emissive_projector"))
         mat->emissive_projector = rt_mat_parse_bool(value);
-    else if (!q_strcasecmp(key, "light_shafts"))
-        mat->light_shafts = rt_mat_parse_bool(value);
-    else if (!q_strcasecmp(key, "light_shafts_power"))
-        mat->light_shafts_power = CLAMP(0.0f, (float)atof(value), 16.0f);
-    else if (!q_strcasecmp(key, "light_shafts_distance"))
-        mat->light_shafts_distance = CLAMP(0.0f, (float)atof(value), 25.0f);
-    else if (!q_strcasecmp(key, "light_shafts_falloff"))
-        mat->light_shafts_falloff = CLAMP(0.0f, (float)atof(value), 4.0f);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
@@ -784,7 +790,7 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->texture_offset_v = v;
     }
     else
-        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+        rt_mat_set_light_shaft_or_warn(mat, key, value);
 }
 
 static void rt_mat_yaml_scalar(const yaml_node_t *node, char *out, size_t outsize)

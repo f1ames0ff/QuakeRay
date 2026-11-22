@@ -425,6 +425,22 @@ void RT_LIGHT_ResolveEmitter(const rt_emitter_light_t *emitter, rt_emitter_resol
     VectorScale(out->color, intensity, out->color);
 }
 
+static void RT_FillSpotLightShafts(QrSpotLightUploadInfo *info, const rt_emitter_light_t *light)
+{
+    info->lightShafts = light->light_shafts ? 1 : 0;
+    info->lightShaftsPower = q_max(0.0f, light->light_shafts_power);
+    info->lightShaftsDistance = q_max(0.0f, light->light_shafts_distance);
+    info->lightShaftsFalloff = q_max(0.01f, light->light_shafts_falloff);
+}
+
+static void RT_FillSphereLightShafts(QrSphericalLightUploadInfo *info, const rt_emitter_light_t *light)
+{
+    info->lightShafts = light->light_shafts ? 1 : 0;
+    info->lightShaftsPower = q_max(0.0f, light->light_shafts_power);
+    info->lightShaftsDistance = q_max(0.0f, light->light_shafts_distance);
+    info->lightShaftsFalloff = q_max(0.01f, light->light_shafts_falloff);
+}
+
 void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
 {
     if (!RT_LightBudgetTake (1))
@@ -482,11 +498,8 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
             .angleOuter = light.angleOuter,
             .angleInner = light.angleInner,
-            .lightShafts = light.light_shafts ? 1 : 0,
-            .lightShaftsPower = q_max(0.0f, light.light_shafts_power),
-            .lightShaftsDistance = q_max(0.0f, light.light_shafts_distance),
-            .lightShaftsFalloff = q_max(0.01f, light.light_shafts_falloff),
         };
+        RT_FillSpotLightShafts(&info, &light);
 
         QrResult r = qrUploadSpotLight(vulkan_globals.instance, &info);
         QR_CHECK(r);
@@ -498,11 +511,8 @@ void RT_LIGHT_Emit(const rt_emitter_light_t *emitter)
             .color = {resolved.color[0], resolved.color[1], resolved.color[2]},
             .position = {position[0], position[1], position[2]},
             .radius = METRIC_TO_QUAKEUNIT(resolved.radius),
-            .lightShafts = light.light_shafts ? 1 : 0,
-            .lightShaftsPower = q_max(0.0f, light.light_shafts_power),
-            .lightShaftsDistance = q_max(0.0f, light.light_shafts_distance),
-            .lightShaftsFalloff = q_max(0.01f, light.light_shafts_falloff),
         };
+        RT_FillSphereLightShafts(&info, &light);
 
         QrResult r = qrUploadSphericalLight(vulkan_globals.instance, &info);
         QR_CHECK(r);
@@ -1526,6 +1536,24 @@ static qboolean RT_CustomColorFromString(const char *s, vec3_t out)
 
 static qboolean RT_CustomBoolFromString(const char *s, qboolean *out);
 
+static void RT_CustomParseLightShaftField(rt_custom_light_t *l, const char *key, const char *val)
+{
+    if (!q_strcasecmp(key, "light_shafts"))
+    {
+        qboolean shafts;
+
+        if (RT_CustomBoolFromString(val, &shafts))
+            l->light_shafts = shafts;
+        return;
+    }
+    if (!q_strcasecmp(key, "light_shafts_power"))
+        l->light_shafts_power = CLAMP(0.0f, (float)atof(val), 16.0f);
+    else if (!q_strcasecmp(key, "light_shafts_distance"))
+        l->light_shafts_distance = CLAMP(0.0f, (float)atof(val), 25.0f);
+    else if (!q_strcasecmp(key, "light_shafts_falloff"))
+        l->light_shafts_falloff = CLAMP(0.0f, (float)atof(val), 4.0f);
+}
+
 // One light of a "lights:" sequence (and of the old plain-sequence form, where
 // the level key maps straight to the lights). False when the list is full, so
 // the caller stops reading the section.
@@ -1585,23 +1613,12 @@ static qboolean RT_CustomParseLight(yaml_document_t *document, yaml_node_t *node
         }
         else if (!q_strcasecmp(fkb, "dir"))
             sscanf(fvb, "%f %f %f", &l->dir[0], &l->dir[1], &l->dir[2]);
-        else if (!q_strcasecmp(fkb, "light_shafts"))
-        {
-            qboolean shafts;
-
-            if (RT_CustomBoolFromString(fvb, &shafts))
-                l->light_shafts = shafts;
-        }
-        else if (!q_strcasecmp(fkb, "light_shafts_power"))
-            l->light_shafts_power = CLAMP(0.0f, (float)atof(fvb), 16.0f);
-        else if (!q_strcasecmp(fkb, "light_shafts_distance"))
-            l->light_shafts_distance = CLAMP(0.0f, (float)atof(fvb), 25.0f);
-        else if (!q_strcasecmp(fkb, "light_shafts_falloff"))
-            l->light_shafts_falloff = CLAMP(0.0f, (float)atof(fvb), 4.0f);
         else if (!q_strcasecmp(fkb, "angle_inner"))
             l->angle_inner = (float)atof(fvb);
         else if (!q_strcasecmp(fkb, "angle_outer"))
             l->angle_outer = (float)atof(fvb);
+        else
+            RT_CustomParseLightShaftField(l, fkb, fvb);
     }
 
     RT_CustomLightValidate(l);
@@ -2422,6 +2439,26 @@ void RT_CustomLights_ChangeMap(const char *mapname)
                    (rt_sky_parsed_count > 0) ? " and sky settings" : "", level);
 }
 
+static void RT_CustomWriteFloatLine(FILE *f, const char *key, float value)
+{
+    char line[96];
+
+    q_snprintf(line, sizeof(line), "      %s: %.6g\n", key, value);
+    fputs(line, f);
+}
+
+static void RT_CustomWriteLightShafts(FILE *f, const rt_custom_light_t *l)
+{
+    if (l->light_shafts)
+        fputs("      light_shafts: true\n", f);
+    if (l->light_shafts_power != 1.0f)
+        RT_CustomWriteFloatLine(f, "light_shafts_power", l->light_shafts_power);
+    if (l->light_shafts_distance > 0.0f)
+        RT_CustomWriteFloatLine(f, "light_shafts_distance", l->light_shafts_distance);
+    if (l->light_shafts_falloff != 1.0f)
+        RT_CustomWriteFloatLine(f, "light_shafts_falloff", l->light_shafts_falloff);
+}
+
 void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
 {
     fprintf(f, "    - origin: %.6g %.6g %.6g\n", l->origin[0], l->origin[1], l->origin[2]);
@@ -2445,14 +2482,7 @@ void RT_CustomLights_WriteEntry(FILE *f, const rt_custom_light_t *l)
         fprintf(f, "      dir: %.6g %.6g %.6g\n", l->dir[0], l->dir[1], l->dir[2]);
         fprintf(f, "      angle_inner: %.6g\n", l->angle_inner);
         fprintf(f, "      angle_outer: %.6g\n", l->angle_outer);
-        if (l->light_shafts)
-            fprintf(f, "      light_shafts: true\n");
-        if (l->light_shafts_power != 1.0f)
-            fprintf(f, "      light_shafts_power: %.6g\n", l->light_shafts_power);
-        if (l->light_shafts_distance > 0.0f)
-            fprintf(f, "      light_shafts_distance: %.6g\n", l->light_shafts_distance);
-        if (l->light_shafts_falloff != 1.0f)
-            fprintf(f, "      light_shafts_falloff: %.6g\n", l->light_shafts_falloff);
+        RT_CustomWriteLightShafts(f, l);
     }
 
     if (l->style > 0)
