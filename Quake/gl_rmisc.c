@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qr_editor.h"
 #include "photocam.h"
 #include "observer.h"
+#include "rt_material.h"
 #include "rt_lights.h"
 #include <float.h>
 
@@ -399,6 +400,20 @@ void R_NewMap (void)
 	PhotoCam_OnNewMap ();
 	Observer_OnNewMap ();
 
+	// Load per-map materials (if not already loaded during Mod_LoadBrushModel,
+	// e.g. on cached-model reloads), emitter overrides, and custom lights / fog /
+	// sky across singleplayer, demos, and multiplayer before census and fog setup.
+	if (cl.mapname[0])
+	{
+		if (q_strcasecmp (RT_MAT_CurrentMap (), cl.mapname) != 0)
+		{
+			RT_MAT_ChangeMap (cl.mapname);
+			TexMgr_ReloadAllImages ();
+		}
+		RT_LIGHT_Reload ();
+		RT_CustomLights_ChangeMap (cl.mapname);
+	}
+
 	for (i = 0; i < 256; i++)
 		d_lightstylevalue[i] = 264; // normal light value
 
@@ -461,8 +476,9 @@ static void R_TimeRefreshNoop (void *unused)
 {
 }
 
-static void R_TimeRefreshDrawDone (gl_end_rendering_context_t **context)
+static void R_TimeRefreshDrawDone (void *payload)
 {
+	gl_end_rendering_context_t **context = (gl_end_rendering_context_t **) payload;
 	GL_CaptureEndRenderingSnapshot (*context);
 }
 

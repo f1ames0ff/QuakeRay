@@ -73,8 +73,10 @@ extern cvar_t crosshair;
 extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
 extern cvar_t rt_dtal_debug;
+extern void   RT_ApplyPendingSunEditor (void);
 
 qboolean scr_initialized; // ready to draw
+static unsigned int scr_gui_frame_serial;
 
 qpic_t *scr_net;
 qpic_t *scr_turtle;
@@ -1061,6 +1063,8 @@ static void SCR_DrawGUI (void *unused)
 		if (QR_Editor_Active ())
 		{
 			SCR_DrawConsole (cbx);
+			if (key_dest == key_menu)
+				M_Draw (cbx);
 			QR_Editor_DrawPanel (cbx);
 		}
 		else if (PhotoCam_Active ())
@@ -1102,12 +1106,12 @@ static void SCR_DrawGUI (void *unused)
 			const qboolean record_on = RT_StatsRecording ();
 
 			if ((stats_on || gui_on || record_on) &&
-			    QR_GUI_BeginFrame ((unsigned int) host_framecount, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
+			    QR_GUI_BeginFrame (scr_gui_frame_serial, (float) host_frametime, glx, gly, glwidth, glheight, vid.height))
 			{
 				RT_StatsDrawGui ();
 				if (SNDEQ_DialogActive ())
 					SNDEQ_DrawDialog ();
-				RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), (unsigned int) host_framecount, (float) host_frametime,
+				RT_DtalDebugDrawGui ((int) CVAR_TO_FLOAT (rt_dtal_debug), scr_gui_frame_serial, (float) host_frametime,
 				                     glx, gly, glwidth, glheight, vid.height);
 				QR_GUI_EndFrame ();
 			}
@@ -1132,8 +1136,9 @@ static void SCR_SetupFrame (void *unused)
 SCR_DrawDone
 ==================
 */
-static void SCR_DrawDone (gl_end_rendering_context_t **context)
+static void SCR_DrawDone (void *payload)
 {
+	gl_end_rendering_context_t **context = (gl_end_rendering_context_t **) payload;
 	GL_CaptureEndRenderingSnapshot (*context);
 	r_framecount++;
 }
@@ -1207,10 +1212,16 @@ void SCR_UpdateScreen (qboolean wait_for_end)
 		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
 		task_handle_t acquire_rendering_task = Task_AllocateAndAssignFunc (GL_AcquireRenderingTask, NULL, 0);
 		Task_AddDependency (begin_rendering_task, acquire_rendering_task);
-		// the editor's queued host actions land and its dirty materials are
-		// re-synthesized before the marking below reads the static-submit
-		// flag (R_MarkSurfaces) and the frame's tasks read the host state
+		// the equalizer, sun editor, and editor's queued host actions land and
+		// dirty materials are re-synthesized on the main thread before marking
+		// reads the static-submit flag (R_MarkSurfaces) and before the frame's
+		// tasks read host state; SDL2 ImGui platform work also runs here before
+		// submit
+		SNDEQ_DrainActions ();
+		RT_ApplyPendingSunEditor ();
 		QR_Editor_FlushDirty ();
+		scr_gui_frame_serial++;
+		QR_GUI_PrepareMainThreadFrame ((float) host_frametime);
 		V_RenderView (begin_rendering_task, setup_frame_task, draw_done_task);
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
 		task_handle_t end_rendering_task = GL_EndRendering (end_rendering_context);

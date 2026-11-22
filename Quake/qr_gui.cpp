@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <climits>
 #include <cmath>
@@ -29,8 +30,10 @@
 namespace
 {
 
-QrInstance   g_instance      = 0;
-QrMaterial   g_font_material = QR_NO_MATERIAL;
+QrInstance    g_instance      = 0;
+ImGuiContext *g_ctx           = nullptr;
+QrMaterial    g_font_material = QR_NO_MATERIAL;
+void         *g_font_data     = nullptr;
 constexpr int   kOverlayFontSizeCount = 10;
 constexpr float kOverlayFontSizes[kOverlayFontSizeCount] = { 10.0f, 12.0f, 14.0f, 16.0f, 18.0f, 20.0f, 22.0f, 24.0f, 26.0f, 28.0f };
 ImFont      *g_stats_fonts[kOverlayFontSizeCount] = {};
@@ -62,12 +65,195 @@ static ImFont *QrGuiAddMonoFont (ImFontAtlas *atlas, float size)
 bool         g_ready         = false;
 bool         g_frame_open    = false;
 bool         g_custom_cursor = false;
-unsigned int g_last_frame_id = 0xFFFFFFFFu;
+
+SDL_threadID g_main_thread_id = 0;
+Uint32       g_window_id = 0;
+bool         g_sdl_frame_prepared = false;
+bool         g_saw_input_event_since_prepare = false;
+bool         g_clear_input_pending = false;
+
+bool         g_has_cached_mouse_pos = false;
+float        g_cached_mouse_x = 0.0f;
+float        g_cached_mouse_y = 0.0f;
+
+std::string  g_clipboard_read_cache;
+bool         g_clipboard_has_cache = false;
+std::string  g_clipboard_write_text;
+bool         g_clipboard_write_pending = false;
+bool         g_clipboard_synced_for_input = false;
+
+SDL_Rect     g_ime_rect = { 0, 0, 0, 0 };
+bool         g_ime_rect_pending = false;
 
 int          g_fb_x = 0, g_fb_y = 0, g_fb_w = 0, g_fb_h = 0, g_drawable_h = 0;
 
 char   g_notify[256] = "";
 double g_notify_time = -1000.0;
+
+float  g_canvas_x = 0.0f;
+float  g_canvas_y = 0.0f;
+int    g_disabled_depth = 0;
+char   g_combo_filter[128] = "";
+
+struct PolygonEditDragState
+{
+	int     index = -1;
+	int     edge = -1;
+	bool    all = false;
+	ImGuiID item = 0;
+	float   anchor[2] = { 0.0f, 0.0f };
+	float   base[32][2] = {};
+	float   edge_base[2][2] = {};
+	bool    edge_perp = false;
+	int     base_count = 0;
+};
+
+PolygonEditDragState g_poly_drag = {};
+
+void ResetPolygonDragState (void)
+{
+	g_poly_drag = PolygonEditDragState ();
+}
+
+void ResetOverlayState (void);
+
+void RefreshClipboardReadCache (void)
+{
+	if (SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	if (SDL_HasClipboardText ())
+	{
+		char *clip = SDL_GetClipboardText ();
+		if (clip)
+		{
+			g_clipboard_read_cache = clip;
+			g_clipboard_has_cache = true;
+			SDL_free (clip);
+			return;
+		}
+	}
+
+	g_clipboard_read_cache.clear ();
+	g_clipboard_has_cache = false;
+}
+
+void FlushDeferredPlatformRequests (void)
+{
+	if (SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	if (g_clipboard_write_pending)
+	{
+		SDL_SetClipboardText (g_clipboard_write_text.c_str ());
+		g_clipboard_write_pending = false;
+	}
+
+	if (g_ime_rect_pending)
+	{
+		SDL_SetTextInputRect (&g_ime_rect);
+		g_ime_rect_pending = false;
+	}
+}
+
+const char *QrGuiGetClipboardText (ImGuiContext *)
+{
+	return g_clipboard_has_cache ? g_clipboard_read_cache.c_str () : nullptr;
+}
+
+void QrGuiSetClipboardText (ImGuiContext *, const char *text)
+{
+	g_clipboard_write_text = text ? text : "";
+	g_clipboard_write_pending = true;
+	g_clipboard_read_cache = g_clipboard_write_text;
+	g_clipboard_has_cache = true;
+}
+
+void QrGuiSetImeData (ImGuiContext *, ImGuiViewport *, ImGuiPlatformImeData *data)
+{
+	if (!data || !data->WantVisible)
+		return;
+
+	g_ime_rect.x = (int)data->InputPos.x;
+	g_ime_rect.y = (int)data->InputPos.y;
+	g_ime_rect.w = 1;
+	g_ime_rect.h = (int)data->InputLineHeight;
+	g_ime_rect_pending = true;
+}
+
+void ClearInputStateNow (void)
+{
+	// Release any tracked mouse button bits in the SDL2 backend (purely in-memory;
+	// makes no SDL API calls) before wiping ImGui's event queue and input state.
+	if (g_window_id != 0)
+	{
+		static const Uint8 kButtons[] = {
+			SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT, SDL_BUTTON_MIDDLE, SDL_BUTTON_X1, SDL_BUTTON_X2,
+		};
+		SDL_Event up = {};
+		up.type = SDL_MOUSEBUTTONUP;
+		up.button.windowID = g_window_id;
+		up.button.state = SDL_RELEASED;
+		for (Uint8 btn : kButtons)
+		{
+			up.button.button = btn;
+			ImGui_ImplSDL2_ProcessEvent (&up);
+		}
+	}
+
+	ImGuiIO &io = ImGui::GetIO ();
+	io.ClearEventsQueue ();
+	io.ClearInputKeys ();
+	io.ClearInputMouse ();
+
+	g_has_cached_mouse_pos = false;
+	g_cached_mouse_x = 0.0f;
+	g_cached_mouse_y = 0.0f;
+	g_saw_input_event_since_prepare = false;
+	ResetPolygonDragState ();
+}
+
+int HexDigitValue (char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'A' && c <= 'F')
+		return 10 + (c - 'A');
+	if (c >= 'a' && c <= 'f')
+		return 10 + (c - 'a');
+	return -1;
+}
+
+bool ParseHexColor6 (const char *text, float rgb[3])
+{
+	if (!text)
+		return false;
+
+	const char *p = text;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '#')
+		p++;
+
+	int d[6];
+	for (int i = 0; i < 6; i++)
+	{
+		d[i] = HexDigitValue (p[i]);
+		if (d[i] < 0)
+			return false;
+	}
+
+	p += 6;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p != '\0')
+		return false;
+
+	rgb[0] = (float)((d[0] << 4) | d[1]) / 255.0f;
+	rgb[1] = (float)((d[2] << 4) | d[3]) / 255.0f;
+	rgb[2] = (float)((d[4] << 4) | d[5]) / 255.0f;
+	return true;
+}
 
 struct TextureBrowserFolder
 {
@@ -290,6 +476,8 @@ void UploadDrawData (void)
 			float cy0 = ClampF ((float)cmd.ClipRect.y, 0.0f, H);
 			float cx1 = ClampF ((float)cmd.ClipRect.z, 0.0f, W);
 			float cy1 = ClampF ((float)cmd.ClipRect.w, 0.0f, H);
+			if (!(cx1 > cx0) || !(cy1 > cy0))
+				continue;
 
 			int x0 = area_x0 + (int)floorf (cx0);
 			int y0 = area_y0 + (int)floorf (cy0);
@@ -298,6 +486,8 @@ void UploadDrawData (void)
 
 			if (x0 < area_x0) x0 = area_x0;
 			if (y0 < area_y0) y0 = area_y0;
+			if (x0 < 0) x0 = 0;
+			if (y0 < 0) y0 = 0;
 			if (x1 > area_x1) x1 = area_x1;
 			if (y1 > area_y1) y1 = area_y1;
 			if (x1 <= x0 || y1 <= y0)
@@ -373,6 +563,8 @@ void DrawMouseCursor (void)
 	}
 
 	io.MouseDrawCursor = false;
+	if (!ImGui::IsMousePosValid (&io.MousePos))
+		return;
 
 	const ImVec2 pos (io.MousePos.x - (float)hotX, io.MousePos.y - (float)hotY);
 	ImGui::GetForegroundDrawList ()->AddImage ((ImTextureID)(uintptr_t)texture, pos, ImVec2 (pos.x + (float)size, pos.y + (float)size));
@@ -383,10 +575,13 @@ void DrawMouseCursor (void)
 void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size)
 {
 	if (g_ready || sdl_window == NULL || qr_instance == NULL)
+	{
+		free (font_data);
 		return;
+	}
 
 	IMGUI_CHECKVERSION ();
-	ImGui::CreateContext ();
+	g_ctx = ImGui::CreateContext ();
 
 	ImGuiIO &io = ImGui::GetIO ();
 	io.IniFilename = nullptr;
@@ -398,31 +593,86 @@ void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font
 	if (!ImGui_ImplSDL2_InitForOther ((SDL_Window *)sdl_window))
 	{
 		fprintf (stderr, "qr gui: SDL2 backend init failed\n");
-		ImGui::DestroyContext (); // the context is created before the backend
+		free (font_data);
+		ImGui::DestroyContext (g_ctx); // the context is created before the backend
+		g_ctx = nullptr;
 		return;
 	}
 
-	ImFont *font = nullptr;
-	if (font_data && font_size > 0)
-	{
-		ImFontConfig stats_config;
-		stats_config.FontDataOwnedByAtlas = false;
+	g_main_thread_id = SDL_ThreadID ();
+	g_window_id = SDL_GetWindowID ((SDL_Window *)sdl_window);
+	g_sdl_frame_prepared = false;
+	g_saw_input_event_since_prepare = false;
+	g_clear_input_pending = false;
+	g_has_cached_mouse_pos = false;
+	g_cached_mouse_x = 0.0f;
+	g_cached_mouse_y = 0.0f;
 
-		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f);
+	// Disable SDL2 gamepad polling inside ImGui_ImplSDL2_NewFrame and route all
+	// platform callbacks through main-thread-deferred caches so SCR_DrawGUI on
+	// a worker thread never invokes main-thread-only SDL2 APIs.
+	ImGui_ImplSDL2_SetGamepadMode (ImGui_ImplSDL2_GamepadMode_Manual, nullptr, 0);
 
-		for (int i = 0; i < kOverlayFontSizeCount; i++)
-			g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, kOverlayFontSizes[i], &stats_config);
-	}
+	ImGuiPlatformIO &platform_io = ImGui::GetPlatformIO ();
+	platform_io.Platform_GetClipboardTextFn = QrGuiGetClipboardText;
+	platform_io.Platform_SetClipboardTextFn = QrGuiSetClipboardText;
+	platform_io.Platform_ClipboardUserData = nullptr;
+	platform_io.Platform_SetImeDataFn = QrGuiSetImeData;
+	platform_io.Platform_OpenInShellFn = nullptr;
+
 	for (int i = 0; i < kOverlayFontSizeCount; i++)
-		g_stats_mono_fonts[i] = QrGuiAddMonoFont (io.Fonts, kOverlayFontSizes[i]);
+	{
+		g_stats_fonts[i] = nullptr;
+		g_stats_mono_fonts[i] = nullptr;
+	}
+	g_font_data = nullptr;
+
+	const bool had_font_input = (font_data != nullptr && font_size > 0);
+	const bool prev_error_assert = io.ConfigErrorRecoveryEnableAssert;
+	const bool prev_error_tooltip = io.ConfigErrorRecoveryEnableTooltip;
+	io.ConfigErrorRecoveryEnableAssert = false;
+	io.ConfigErrorRecoveryEnableTooltip = false;
+
+	ImFont *font = nullptr;
+	if (font_data && font_size > 100)
+	{
+		ImFontConfig font_config;
+		font_config.FontDataOwnedByAtlas = false;
+
+		font = io.Fonts->AddFontFromMemoryTTF (font_data, font_size, 19.0f, &font_config);
+		if (font)
+		{
+			g_font_data = font_data;
+			for (int i = 0; i < kOverlayFontSizeCount; i++)
+				g_stats_fonts[i] = io.Fonts->AddFontFromMemoryTTF (g_font_data, font_size, kOverlayFontSizes[i], &font_config);
+		}
+		else
+		{
+			free (font_data);
+			font_data = nullptr;
+		}
+	}
+	else if (font_data)
+	{
+		free (font_data);
+		font_data = nullptr;
+	}
+
 	if (!font)
 	{
 		ImFontConfig cfg;
 		cfg.SizePixels = 19.0f;
 		font = io.Fonts->AddFontDefault (&cfg);
-		if (font_data && font_size > 0)
+		if (had_font_input)
 			fprintf (stderr, "qr gui: cannot load the font, using the default font\n");
 	}
+	io.FontDefault = font;
+
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+		g_stats_mono_fonts[i] = QrGuiAddMonoFont (io.Fonts, kOverlayFontSizes[i]);
+
+	io.ConfigErrorRecoveryEnableAssert = prev_error_assert;
+	io.ConfigErrorRecoveryEnableTooltip = prev_error_tooltip;
 
 	g_instance = (QrInstance)qr_instance;
 
@@ -464,6 +714,8 @@ void QR_GUI_Shutdown (void)
 	if (!g_ready)
 		return;
 
+	FlushDeferredPlatformRequests ();
+
 	// the font atlas is the bridge's own material and outlives the context
 	if (g_font_material != QR_NO_MATERIAL && g_instance)
 	{
@@ -472,23 +724,137 @@ void QR_GUI_Shutdown (void)
 	}
 
 	ImGui_ImplSDL2_Shutdown ();
-	ImGui::DestroyContext ();
+	ImGui::DestroyContext (g_ctx);
+	g_ctx = nullptr;
+
+	free (g_font_data);
+	g_font_data = nullptr;
+
+	for (int i = 0; i < kOverlayFontSizeCount; i++)
+	{
+		g_stats_fonts[i] = nullptr;
+		g_stats_mono_fonts[i] = nullptr;
+	}
+
+	g_instance = 0;
 	g_ready = false;
+	g_frame_open = false;
+	g_custom_cursor = false;
+	g_main_thread_id = 0;
+	g_window_id = 0;
+	g_sdl_frame_prepared = false;
+	g_saw_input_event_since_prepare = false;
+	g_clear_input_pending = false;
+	g_has_cached_mouse_pos = false;
+	g_cached_mouse_x = 0.0f;
+	g_cached_mouse_y = 0.0f;
+
+	g_clipboard_read_cache.clear ();
+	g_clipboard_has_cache = false;
+	g_clipboard_write_text.clear ();
+	g_clipboard_write_pending = false;
+	g_clipboard_synced_for_input = false;
+	g_ime_rect = { 0, 0, 0, 0 };
+	g_ime_rect_pending = false;
+
+	g_fb_x = g_fb_y = g_fb_w = g_fb_h = g_drawable_h = 0;
+	g_notify[0] = '\0';
+	g_notify_time = -1000.0;
+	g_canvas_x = 0.0f;
+	g_canvas_y = 0.0f;
+	g_disabled_depth = 0;
+	g_combo_filter[0] = '\0';
+	ResetPolygonDragState ();
+
+	g_texbrowser_active = false;
+	g_texbrowser_rebuild = true;
+	g_texbrowser_filter[0] = '\0';
+	g_texbrowser_current.clear ();
+	g_texbrowser_folders.clear ();
+	g_texbrowser_item_folder.clear ();
+	g_texbrowser_visible.clear ();
+	g_texbrowser_revision = 0;
+	g_texbrowser_count = -1;
+	g_texbrowser_folder = -1;
+	g_texbrowser_selected = -1;
+	g_texbrowser_focus_filter = false;
+	g_texbrowser_focus_window = false;
+
+	g_verts.clear ();
+	g_indices.clear ();
+	ResetOverlayState ();
+}
+
+void QR_GUI_PrepareMainThreadFrame (float dt)
+{
+	if (!g_ready || g_frame_open || SDL_ThreadID () != g_main_thread_id)
+		return;
+
+	FlushDeferredPlatformRequests ();
+
+	if (g_clear_input_pending)
+	{
+		g_clear_input_pending = false;
+		ClearInputStateNow ();
+	}
+
+	ImGuiIO &io = ImGui::GetIO ();
+	if (io.WantTextInput)
+	{
+		if (!g_clipboard_synced_for_input)
+		{
+			RefreshClipboardReadCache ();
+			g_clipboard_synced_for_input = true;
+		}
+	}
+	else
+	{
+		g_clipboard_synced_for_input = false;
+	}
+
+	// If the previous frame prepared SDL state without starting an ImGui frame
+	// and no user events arrived since then, discard any fallback mouse-pos
+	// events added by ImGui_ImplSDL2_NewFrame so InputEventsQueue cannot grow
+	// unboundedly during normal non-GUI gameplay.
+	if (g_sdl_frame_prepared && !g_saw_input_event_since_prepare)
+	{
+		if (ImGuiContext *ctx = ImGui::GetCurrentContext ())
+			ctx->InputEventsQueue.resize (0);
+	}
+
+	ImGui_ImplSDL2_NewFrame ();
+	io.DeltaTime = dt > 0.0f ? dt : (1.0f / 60.0f);
+	g_sdl_frame_prepared = true;
+	g_saw_input_event_since_prepare = false;
 }
 
 int QR_GUI_BeginFrame (unsigned int frame_id, float dt, int x, int y, int width, int height, int drawable_height)
 {
-	if (!g_ready || g_frame_open || frame_id == g_last_frame_id)
+	(void)frame_id;
+
+	if (!g_ready || g_frame_open)
 		return 0;
 
-	g_last_frame_id = frame_id;
 	g_fb_x = x;
 	g_fb_y = y;
 	g_fb_w = width;
 	g_fb_h = height;
 	g_drawable_h = drawable_height;
 
-	ImGui_ImplSDL2_NewFrame ();
+	// Single-threaded / headless callers that skip QR_GUI_PrepareMainThreadFrame
+	// still run SDL2 frame prep when on the main thread; worker threads never
+	// touch SDL2 platform APIs.
+	if (!g_sdl_frame_prepared && SDL_ThreadID () == g_main_thread_id)
+	{
+		FlushDeferredPlatformRequests ();
+		if (g_clear_input_pending)
+		{
+			g_clear_input_pending = false;
+			ClearInputStateNow ();
+		}
+		ImGui_ImplSDL2_NewFrame ();
+	}
+	g_sdl_frame_prepared = false;
 
 	ImGuiIO &io = ImGui::GetIO ();
 	io.DisplaySize = ImVec2 ((float)width, (float)height);
@@ -521,7 +887,50 @@ int QR_GUI_ProcessEvent (const void *sdl_event)
 
 	const SDL_Event *e = (const SDL_Event *)sdl_event;
 
+	if (SDL_ThreadID () == g_main_thread_id)
+	{
+		if (e->type == SDL_WINDOWEVENT && e->window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+		{
+			FlushDeferredPlatformRequests ();
+			RefreshClipboardReadCache ();
+		}
+		else if (e->type == SDL_KEYDOWN)
+		{
+			const Uint16 mod = e->key.keysym.mod;
+			const bool   paste_shortcut =
+			    ((mod & (KMOD_CTRL | KMOD_GUI)) != 0 && e->key.keysym.sym == SDLK_v) ||
+			    ((mod & KMOD_SHIFT) != 0 && e->key.keysym.sym == SDLK_INSERT);
+			if (paste_shortcut)
+			{
+				FlushDeferredPlatformRequests ();
+				RefreshClipboardReadCache ();
+			}
+		}
+	}
+
+	switch (e->type)
+	{
+	case SDL_MOUSEMOTION:
+		g_cached_mouse_x = (float)e->motion.x;
+		g_cached_mouse_y = (float)e->motion.y;
+		g_has_cached_mouse_pos = true;
+		break;
+	case SDL_MOUSEBUTTONDOWN:
+	case SDL_MOUSEBUTTONUP:
+		g_cached_mouse_x = (float)e->button.x;
+		g_cached_mouse_y = (float)e->button.y;
+		g_has_cached_mouse_pos = true;
+		break;
+	case SDL_WINDOWEVENT:
+		if (e->window.event == SDL_WINDOWEVENT_LEAVE || e->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+			g_has_cached_mouse_pos = false;
+		break;
+	default:
+		break;
+	}
+
 	ImGui_ImplSDL2_ProcessEvent (e);
+	g_saw_input_event_since_prepare = true;
 
 	switch (e->type)
 	{
@@ -537,6 +946,21 @@ int QR_GUI_ProcessEvent (const void *sdl_event)
 	default:
 		return 0;
 	}
+}
+
+void QR_GUI_ClearInputState (void)
+{
+	if (!g_ready)
+		return;
+
+	if (g_frame_open || SDL_ThreadID () != g_main_thread_id)
+	{
+		g_clear_input_pending = true;
+		return;
+	}
+
+	g_clear_input_pending = false;
+	ClearInputStateNow ();
 }
 
 int QR_GUI_WantsMouse (void)
@@ -610,9 +1034,6 @@ void QR_GUI_EndDialog (void)
 {
 	ImGui::End ();
 }
-
-static float g_canvas_x;
-static float g_canvas_y;
 
 int QR_GUI_Canvas (const char *id, float width, float height, float *out_x, float *out_y)
 {
@@ -898,6 +1319,8 @@ float QR_GUI_TextWidth (const char *text)
 
 int QR_GUI_CtrlDown (void)
 {
+	if (!g_ready)
+		return 0;
 	return ImGui::GetIO ().KeyCtrl ? 1 : 0;
 }
 
@@ -1085,8 +1508,6 @@ static bool QRGuiTextHas (const char *haystack, const char *needle)
 // typed, the keyboard walks it like any combo's list, and the value changes only on a pick.
 int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *items, int count, const char *tooltip)
 {
-	static char filter[128];
-
 	char id[192];
 	int  changed = 0;
 
@@ -1105,12 +1526,12 @@ int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *item
 	{
 		if (ImGui::IsWindowAppearing ())
 		{
-			filter[0] = '\0';
+			g_combo_filter[0] = '\0';
 			ImGui::SetKeyboardFocusHere ();
 		}
 
 		ImGui::SetNextItemWidth (ImGui::GetContentRegionAvail ().x);
-		const bool enter = ImGui::InputTextWithHint ("##filter", "search...", filter, sizeof (filter),
+		const bool enter = ImGui::InputTextWithHint ("##filter", "search...", g_combo_filter, sizeof (g_combo_filter),
 		                                             ImGuiInputTextFlags_EnterReturnsTrue);
 
 		int shown = 0;
@@ -1118,7 +1539,7 @@ int QR_GUI_ComboFiltered (const char *label, int *value, const char *const *item
 
 		for (int i = 0; i < count; i++)
 		{
-			if (!QRGuiTextHas (items[i], filter))
+			if (!QRGuiTextHas (items[i], g_combo_filter))
 				continue;
 
 			ImGui::PushID (i);
@@ -1168,13 +1589,10 @@ int QR_GUI_InputText (const char *label, char *buf, size_t capacity, const char 
 int QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const char *tooltip)
 {
 	static const char *const axis[3] = { "X", "Y", "Z" };
-	char               id[192];
-	int                i, changed = 0;
-	const ImGuiStyle  &style = ImGui::GetStyle ();
-	const float        letter = ImGui::CalcTextSize ("X").x;
-	float              field;
-
-	WidgetId (id, sizeof (id), label);
+	int                      i, changed = 0;
+	const ImGuiStyle        &style = ImGui::GetStyle ();
+	const float              letter = ImGui::CalcTextSize ("X").x;
+	float                    field;
 
 	LabelColumn (label, tooltip);
 
@@ -1188,7 +1606,8 @@ int QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const
 	ImGui::PushID (label);
 	for (i = 0; i < 3; i++)
 	{
-		char aid[16];
+		char  aid[16];
+		float edited = v[i];
 
 		if (i)
 			ImGui::SameLine ();
@@ -1196,14 +1615,14 @@ int QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const
 		ImGui::SameLine ();
 		snprintf (aid, sizeof (aid), "##%s", axis[i]);
 		ImGui::SetNextItemWidth (field);
-		if (ImGui::InputFloat (aid, &v[i], 0.0f, 0.0f, "%.2f"))
-			changed = 1;
+		if (ImGui::InputFloat (aid, &edited, 0.0f, 0.0f, "%.2f"))
+		{
+			v[i] = ClampF (edited, min, max);
+			changed |= 1 << i;
+		}
+		ItemTooltip (tooltip);
 	}
-	ItemTooltip (tooltip);
 	ImGui::PopID ();
-
-	for (i = 0; i < 3; i++)
-		v[i] = ClampF (v[i], min, max);
 
 	return changed;
 }
@@ -1211,32 +1630,19 @@ int QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const
 int QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, const unsigned char mixed[3], const char *tooltip)
 {
 	static const char *const axis[3] = { "X", "Y", "Z" };
-	char               id[192];
-	int                i, changed = 0;
-	bool               any = false;
-	const ImGuiStyle  &style = ImGui::GetStyle ();
-	const float        letter = ImGui::CalcTextSize ("X").x;
-	float              field;
+	int                      i, changed = 0;
+	bool                     any = false;
+	const ImGuiStyle        &style = ImGui::GetStyle ();
+	const float              letter = ImGui::CalcTextSize ("X").x;
+	float                    field;
 
 	for (i = 0; i < 3; i++)
 	{
-		if (mixed[i])
+		if (mixed && mixed[i])
 			any = true;
 	}
 	if (!any)
-	{
-		float before[3];
-
-		for (i = 0; i < 3; i++)
-			before[i] = v[i];
-		QR_GUI_Vec3Input (label, v, min, max, tooltip);
-		for (i = 0; i < 3; i++)
-			if (v[i] != before[i])
-				changed |= 1 << i;
-		return changed;
-	}
-
-	WidgetId (id, sizeof (id), label);
+		return QR_GUI_Vec3Input (label, v, min, max, tooltip);
 
 	LabelColumn (label, tooltip);
 
@@ -1247,7 +1653,8 @@ int QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, 
 	ImGui::PushID (label);
 	for (i = 0; i < 3; i++)
 	{
-		char aid[16];
+		char  aid[16];
+		float edited = v[i];
 
 		if (i)
 			ImGui::SameLine ();
@@ -1255,15 +1662,15 @@ int QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, 
 		ImGui::SameLine ();
 		snprintf (aid, sizeof (aid), "##%s", axis[i]);
 		ImGui::SetNextItemWidth (field);
-		if (ImGui::InputFloat (aid, &v[i], 0.0f, 0.0f, mixed[i] ? "?" : "%.2f",
+		if (ImGui::InputFloat (aid, &edited, 0.0f, 0.0f, mixed[i] ? "?" : "%.2f",
 		                       mixed[i] ? ImGuiInputTextFlags_AutoSelectAll : (ImGuiInputTextFlags)0))
+		{
+			v[i] = ClampF (edited, min, max);
 			changed |= 1 << i;
+		}
+		ItemTooltip (tooltip);
 	}
-	ItemTooltip (tooltip);
 	ImGui::PopID ();
-
-	for (i = 0; i < 3; i++)
-		v[i] = ClampF (v[i], min, max);
 
 	return changed;
 }
@@ -1883,8 +2290,6 @@ int QR_GUI_ResetButton (const char *label, int enabled)
 	return pressed ? 1 : 0;
 }
 
-static int g_disabled_depth = 0;
-
 void QR_GUI_PushDisabled (int disabled)
 {
 	if (!disabled)
@@ -1959,38 +2364,34 @@ int QR_GUI_ColorHexMixed (const char *label, float rgb[3], int *enabled, int mix
 
 	ImGui::PushID (label);
 
-	bool en = *enabled != 0;
-	ImGui::PushItemFlag (ImGuiItemFlags_MixedValue, true);
-	if (ImGui::Checkbox ("##enabled", &en))
+	if (enabled)
 	{
-		*enabled = en ? 1 : 0;
-		result = 1;
-	}
-	ImGui::PopItemFlag ();
-	ImGui::SetItemTooltip ("Enable the color");
+		bool en = *enabled != 0;
+		ImGui::PushItemFlag (ImGuiItemFlags_MixedValue, true);
+		if (ImGui::Checkbox ("##enabled", &en))
+		{
+			*enabled = en ? 1 : 0;
+			result = 1;
+		}
+		ImGui::PopItemFlag ();
+		ImGui::SetItemTooltip ("Enable the color");
 
-	ImGui::SameLine ();
+		ImGui::SameLine ();
+	}
 
 	{
 		char buf[16] = "?";
 
 		ImGui::SetNextItemWidth (RowWidth (ImGui::GetFrameHeight () + ImGui::GetStyle ().ItemInnerSpacing.x));
-		if (ImGui::InputText ("##color", buf, sizeof (buf),
-		                      ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CharsUppercase))
+		const bool entered = ImGui::InputText ("##color", buf, sizeof (buf),
+		                                       ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CharsUppercase |
+		                                       ImGuiInputTextFlags_EnterReturnsTrue);
+		const bool committed = entered || ImGui::IsItemDeactivatedAfterEdit ();
+		if (committed && ParseHexColor6 (buf, rgb))
 		{
-			char        *p = buf;
-			unsigned int r, g, b;
-
-			while (*p == '#' || *p == ' ')
-				p++;
-			if (sscanf (p, "%02X%02X%02X", &r, &g, &b) == 3)
-			{
-				rgb[0] = (float)r / 255.0f;
-				rgb[1] = (float)g / 255.0f;
-				rgb[2] = (float)b / 255.0f;
+			if (enabled)
 				*enabled = 1;
-				result = 1;
-			}
+			result = 1;
 		}
 		if (tooltip && *tooltip)
 			ImGui::SetItemTooltip ("%s\nType the hex value or pick from the swatch", tooltip);
@@ -2002,7 +2403,8 @@ int QR_GUI_ColorHexMixed (const char *label, float rgb[3], int *enabled, int mix
 
 	if (ImGui::ColorEdit3 ("##pick", rgb, ImGuiColorEditFlags_NoInputs))
 	{
-		*enabled = 1;
+		if (enabled)
+			*enabled = 1;
 		result = 1;
 	}
 	if (tooltip && *tooltip)
@@ -2061,6 +2463,8 @@ void QR_GUI_PopID (void)
 
 int QR_GUI_AnyItemActive (void)
 {
+	if (!g_ready)
+		return 0;
 	return ImGui::IsAnyItemActive () ? 1 : 0;
 }
 
@@ -2136,53 +2540,62 @@ int QR_GUI_ImagePick (const char *id, int64_t texture, int tex_w, int tex_h, flo
 	const ImVec2 pos = ImGui::GetCursorScreenPos ();
 	const ImVec2 size (w, h);
 
+	ImGui::InvisibleButton ("##pick", size, ImGuiButtonFlags_MouseButtonLeft);
+	const bool hovered = ImGui::IsItemHovered ();
+	const bool active = ImGui::IsItemActive ();
+
 	const ImGuiID view_id = ImGui::GetID ("##preview_view");
 	PreviewView   view = PreviewViewLoad (view_id);
-	const bool    over = ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h));
 
-	if (over && ImGui::GetIO ().KeyCtrl && ImGui::GetIO ().MouseWheel != 0.0f)
+	// while the pointer is directly over the preview (not blocked by a popup/combo)
+	// and Ctrl is down, the wheel owns zoom instead of scrolling the panel
+	if (hovered && ImGui::GetIO ().KeyCtrl)
 	{
-		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
-		PreviewViewStore (view_id, view);
+		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+		if (ImGui::GetIO ().MouseWheel != 0.0f)
+		{
+			view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+			PreviewViewStore (view_id, view);
+		}
 	}
 
 	const float span = 1.0f / view.zoom;
+	ImDrawList *dl = ImGui::GetWindowDrawList ();
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
+	dl->AddImage ((ImTextureID)(uint64_t)texture, pos, ImVec2 (pos.x + w, pos.y + h),
+	              ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
-	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's,
-	// not the panel's scroll (the image has no item ID, so the owner is the view's)
-	if (over && ImGui::GetIO ().KeyCtrl)
-		ImGui::SetKeyOwner (ImGuiKey_MouseWheelY, view_id);
-
-	const bool hovered = ImGui::IsItemHovered ();
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
 	int          result = 0;
 
-	if (hovered)
+	if (active && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 	{
-		float u = view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span;
-		float v = view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span;
+		const float u = ClampF (view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span, 0.0f, 1.0f);
+		const float v = ClampF (view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span, 0.0f, 1.0f);
 
-		u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
-		v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
 		if (out_u)
 			*out_u = u;
 		if (out_v)
 			*out_v = v;
+		result = 1;
+	}
+	else if (hovered)
+	{
+		const float u = ClampF (view.u0 + (mouse.x - pos.x) / (w > 1.0f ? w : 1.0f) * span, 0.0f, 1.0f);
+		const float v = ClampF (view.v0 + (mouse.y - pos.y) / (h > 1.0f ? h : 1.0f) * span, 0.0f, 1.0f);
 
-		// the press takes effect at once and the drag keeps following it
-		if (ImGui::IsMouseDown (ImGuiMouseButton_Left))
-			result = 1;
-
-		ImGui::SetMouseCursor (ImGuiMouseCursor_Hand);
+		if (out_u)
+			*out_u = u;
+		if (out_v)
+			*out_v = v;
 	}
 
-	ImDrawList *dl = ImGui::GetWindowDrawList ();
+	if (hovered || active)
+		ImGui::SetMouseCursor (ImGuiMouseCursor_Hand);
 
 	dl->AddRect (pos, ImVec2 (pos.x + w, pos.y + h), IM_COL32 (150, 160, 185, 255));
 
-	if (hovered)
+	if (hovered && ImGui::IsMousePosValid (&mouse))
 	{
 		const ImU32 col = IM_COL32 (255, 230, 150, 230);
 
@@ -2228,16 +2641,6 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		return 0;
 	}
 
-	static int     drag_index = -1;
-	static int     drag_edge = -1;
-	static bool    drag_all = false;
-	static ImGuiID drag_item = 0;
-	static float   drag_anchor[2] = {0.0f, 0.0f};
-	static float   drag_base[32][2];
-	static float   drag_edge_base[2][2];
-	static bool    drag_edge_perp = false;
-	static int     drag_base_count = 0;
-
 	float w = ImGui::GetContentRegionAvail ().x;
 
 	if (w < 32.0f)
@@ -2249,14 +2652,23 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	const ImVec2 mouse = ImGui::GetIO ().MousePos;
 	const ImVec2 size (w, h);
 
+	ImGui::InvisibleButton ("##mask", size,
+	                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+	const bool hovered = ImGui::IsItemHovered ();
+
 	const ImGuiID view_id = ImGui::GetID ("##preview_view");
 	PreviewView   view = PreviewViewLoad (view_id);
 
-	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl &&
-	    ImGui::GetIO ().MouseWheel != 0.0f)
+	// while the pointer is directly over the preview (not blocked by a popup/combo)
+	// and Ctrl is down, the wheel owns zoom instead of scrolling the panel
+	if (hovered && ImGui::GetIO ().KeyCtrl)
 	{
-		view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
-		PreviewViewStore (view_id, view);
+		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+		if (ImGui::GetIO ().MouseWheel != 0.0f)
+		{
+			view = PreviewViewWheel (view, pos, size, ImGui::GetIO ().MouseWheel);
+			PreviewViewStore (view_id, view);
+		}
 	}
 
 	const float span = 1.0f / view.zoom;
@@ -2266,22 +2678,15 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	auto sx = [&] (float u) { return pos.x + (u - view.u0) / span * w; };
 	auto sy = [&] (float v) { return pos.y + (v - view.v0) / span * h; };
 
-	ImGui::Image ((ImTextureID)(uint64_t)texture, size, ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
-
-	ImGui::SetCursorScreenPos (pos);
-	ImGui::InvisibleButton ("##mask", size,
-	                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-
-	// while the pointer is on the preview and Ctrl is down the wheel is the zoom's, not the
-	// panel's scroll
-	if (ImGui::IsMouseHoveringRect (pos, ImVec2 (pos.x + w, pos.y + h)) && ImGui::GetIO ().KeyCtrl)
-		ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY);
+	ImDrawList *dl = ImGui::GetWindowDrawList ();
+	dl->AddImage ((ImTextureID)(uint64_t)texture, pos, ImVec2 (pos.x + w, pos.y + h),
+	              ImVec2 (view.u0, view.v0), ImVec2 (view.u0 + span, view.v0 + span));
 
 	const ImGuiID item = ImGui::GetItemID ();
 	int           changed = 0;
 	int           hover = -1;
 
-	if (ImGui::IsItemHovered ())
+	if (hovered)
 	{
 		for (int p = 0; p < points; p++)
 		{
@@ -2299,7 +2704,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 
 	int hover_edge = -1;
 
-	if (ImGui::IsItemHovered () && hover < 0)
+	if (hovered && hover < 0)
 	{
 		float best = 9.0f;
 
@@ -2330,11 +2735,11 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		{
 			if (ImGui::GetIO ().KeyShift)
 			{
-				// Shift drags the edge along its own normal: the cursor is the double arrow
-				// that points the way the edge will step
+				// Shift drags the edge along its own pixel-space normal: the cursor
+				// is the double arrow that points the way the edge will step
 				const int   q = (hover_edge + 1) % points;
-				const float ex = uv[q][0] - uv[hover_edge][0];
-				const float ey = uv[q][1] - uv[hover_edge][1];
+				const float ex = (uv[q][0] - uv[hover_edge][0]) * w;
+				const float ey = (uv[q][1] - uv[hover_edge][1]) * h;
 				const bool  edge_more_vertical = fabsf (ey) >= fabsf (ex);
 
 				ImGui::SetMouseCursor (edge_more_vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
@@ -2368,10 +2773,10 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		}
 		else if (hover >= 0)
 		{
-			drag_index = hover;
-			drag_edge = -1;
-			drag_all = false;
-			drag_item = item;
+			g_poly_drag.index = hover;
+			g_poly_drag.edge = -1;
+			g_poly_drag.all = false;
+			g_poly_drag.item = item;
 		}
 		else if (ImGui::GetIO ().KeyCtrl && points < max_count)
 		{
@@ -2410,56 +2815,56 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 			uv[best][1] = v;
 			points++;
 			*count = points;
-			drag_index = best;
-			drag_edge = -1;
-			drag_all = false;
-			drag_item = item;
+			g_poly_drag.index = best;
+			g_poly_drag.edge = -1;
+			g_poly_drag.all = false;
+			g_poly_drag.item = item;
 			changed = 1;
 		}
 		else if (hover_edge >= 0)
 		{
 			const int q = (hover_edge + 1) % points;
 
-			drag_edge = hover_edge;
-			drag_edge_perp = ImGui::GetIO ().KeyShift ? true : false;
-			drag_edge_base[0][0] = uv[hover_edge][0];
-			drag_edge_base[0][1] = uv[hover_edge][1];
-			drag_edge_base[1][0] = uv[q][0];
-			drag_edge_base[1][1] = uv[q][1];
-			drag_anchor[0] = u;
-			drag_anchor[1] = v;
-			drag_index = -1;
-			drag_all = false;
-			drag_item = item;
+			g_poly_drag.edge = hover_edge;
+			g_poly_drag.edge_perp = ImGui::GetIO ().KeyShift ? true : false;
+			g_poly_drag.edge_base[0][0] = uv[hover_edge][0];
+			g_poly_drag.edge_base[0][1] = uv[hover_edge][1];
+			g_poly_drag.edge_base[1][0] = uv[q][0];
+			g_poly_drag.edge_base[1][1] = uv[q][1];
+			g_poly_drag.anchor[0] = u;
+			g_poly_drag.anchor[1] = v;
+			g_poly_drag.index = -1;
+			g_poly_drag.all = false;
+			g_poly_drag.item = item;
 		}
 		else if (inside)
 		{
-			drag_anchor[0] = u;
-			drag_anchor[1] = v;
-			drag_base_count = points;
+			g_poly_drag.anchor[0] = u;
+			g_poly_drag.anchor[1] = v;
+			g_poly_drag.base_count = points;
 			for (int p = 0; p < points; p++)
 			{
-				drag_base[p][0] = uv[p][0];
-				drag_base[p][1] = uv[p][1];
+				g_poly_drag.base[p][0] = uv[p][0];
+				g_poly_drag.base[p][1] = uv[p][1];
 			}
-			drag_index = -1;
-			drag_edge = -1;
-			drag_all = true;
-			drag_item = item;
+			g_poly_drag.index = -1;
+			g_poly_drag.edge = -1;
+			g_poly_drag.all = true;
+			g_poly_drag.item = item;
 		}
 	}
 
-	if (drag_item == item && drag_all)
+	if (g_poly_drag.item == item && g_poly_drag.all)
 	{
 		if (ImGui::IsItemActive () && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 		{
-			const float du = u - drag_anchor[0];
-			const float dv = v - drag_anchor[1];
+			const float du = u - g_poly_drag.anchor[0];
+			const float dv = v - g_poly_drag.anchor[1];
 
-			for (int p = 0; p < drag_base_count && p < points; p++)
+			for (int p = 0; p < g_poly_drag.base_count && p < points; p++)
 			{
-				const float nu = ClampF (drag_base[p][0] + du, 0.0f, 1.0f);
-				const float nv = ClampF (drag_base[p][1] + dv, 0.0f, 1.0f);
+				const float nu = ClampF (g_poly_drag.base[p][0] + du, 0.0f, 1.0f);
+				const float nv = ClampF (g_poly_drag.base[p][1] + dv, 0.0f, 1.0f);
 
 				if (uv[p][0] != nu || uv[p][1] != nv)
 				{
@@ -2471,34 +2876,34 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		}
 		else
 		{
-			drag_all = false;
-			drag_item = 0;
+			g_poly_drag.all = false;
+			g_poly_drag.item = 0;
 		}
 	}
-	else if (drag_item == item && drag_edge >= 0 && drag_edge < points)
+	else if (g_poly_drag.item == item && g_poly_drag.edge >= 0 && g_poly_drag.edge < points)
 	{
 		if (ImGui::IsItemActive () && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 		{
-			const int   q = (drag_edge + 1) % points;
-			float       du = u - drag_anchor[0];
-			float       dv = v - drag_anchor[1];
+			const int   q = (g_poly_drag.edge + 1) % points;
+			float       du = u - g_poly_drag.anchor[0];
+			float       dv = v - g_poly_drag.anchor[1];
 
-			if (drag_edge_perp)
+			if (g_poly_drag.edge_perp)
 			{
-				/* Ctrl: the edge steps along its own normal, so the motion is projected on the
-				   perpendicular and the edge keeps the direction it had. */
-				const float ex = drag_edge_base[1][0] - drag_edge_base[0][0];
-				const float ey = drag_edge_base[1][1] - drag_edge_base[0][1];
+				/* Shift: the edge steps along its own pixel-space normal, so the motion
+				   is projected on the visual perpendicular regardless of aspect ratio. */
+				const float ex = (g_poly_drag.edge_base[1][0] - g_poly_drag.edge_base[0][0]) * w;
+				const float ey = (g_poly_drag.edge_base[1][1] - g_poly_drag.edge_base[0][1]) * h;
 				const float len = sqrtf (ex * ex + ey * ey);
 
-				if (len > 1e-8f)
+				if (len > 1e-8f && w > 1e-8f && h > 1e-8f)
 				{
 					const float nx = -ey / len;
 					const float ny = ex / len;
-					const float proj = du * nx + dv * ny;
+					const float proj = (du * w) * nx + (dv * h) * ny;
 
-					du = nx * proj;
-					dv = ny * proj;
+					du = (nx * proj) / w;
+					dv = (ny * proj) / h;
 				}
 				else
 				{
@@ -2506,15 +2911,15 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 				}
 			}
 
-			const float a0 = ClampF (drag_edge_base[0][0] + du, 0.0f, 1.0f);
-			const float b0 = ClampF (drag_edge_base[0][1] + dv, 0.0f, 1.0f);
-			const float a1 = ClampF (drag_edge_base[1][0] + du, 0.0f, 1.0f);
-			const float b1 = ClampF (drag_edge_base[1][1] + dv, 0.0f, 1.0f);
+			const float a0 = ClampF (g_poly_drag.edge_base[0][0] + du, 0.0f, 1.0f);
+			const float b0 = ClampF (g_poly_drag.edge_base[0][1] + dv, 0.0f, 1.0f);
+			const float a1 = ClampF (g_poly_drag.edge_base[1][0] + du, 0.0f, 1.0f);
+			const float b1 = ClampF (g_poly_drag.edge_base[1][1] + dv, 0.0f, 1.0f);
 
-			if (uv[drag_edge][0] != a0 || uv[drag_edge][1] != b0)
+			if (uv[g_poly_drag.edge][0] != a0 || uv[g_poly_drag.edge][1] != b0)
 			{
-				uv[drag_edge][0] = a0;
-				uv[drag_edge][1] = b0;
+				uv[g_poly_drag.edge][0] = a0;
+				uv[g_poly_drag.edge][1] = b0;
 				changed = 1;
 			}
 			if (uv[q][0] != a1 || uv[q][1] != b1)
@@ -2526,30 +2931,29 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 		}
 		else
 		{
-			drag_edge = -1;
-			drag_item = 0;
+			g_poly_drag.edge = -1;
+			g_poly_drag.item = 0;
 		}
 	}
-	else if (drag_item == item && drag_index >= 0 && drag_index < points)
+	else if (g_poly_drag.item == item && g_poly_drag.index >= 0 && g_poly_drag.index < points)
 	{
 		if (ImGui::IsItemActive () && ImGui::IsMouseDown (ImGuiMouseButton_Left))
 		{
-			if (uv[drag_index][0] != u || uv[drag_index][1] != v)
+			if (uv[g_poly_drag.index][0] != u || uv[g_poly_drag.index][1] != v)
 			{
-				uv[drag_index][0] = u;
-				uv[drag_index][1] = v;
+				uv[g_poly_drag.index][0] = u;
+				uv[g_poly_drag.index][1] = v;
 				changed = 1;
 			}
 		}
 		else
 		{
-			drag_index = -1;
-			drag_item = 0;
+			g_poly_drag.index = -1;
+			g_poly_drag.item = 0;
 		}
 	}
 
-	ImDrawList *dl = ImGui::GetWindowDrawList ();
-	ImVec2      pts[32];
+	ImVec2 pts[32];
 
 	for (int p = 0; p < points; p++)
 		pts[p] = ImVec2 (sx (uv[p][0]), sy (uv[p][1]));
@@ -2562,7 +2966,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 	dl->AddPolyline (pts, points, IM_COL32 (255, 255, 255, 220), ImDrawFlags_Closed, 1.5f);
 
 	{
-		const int edge = (drag_item == item && drag_edge >= 0) ? drag_edge : hover_edge;
+		const int edge = (g_poly_drag.item == item && g_poly_drag.edge >= 0) ? g_poly_drag.edge : hover_edge;
 
 		if (edge >= 0 && edge < points)
 		{
@@ -2574,7 +2978,7 @@ int QR_GUI_PolygonEdit (const char *id, int64_t texture, int tex_w, int tex_h,
 
 	for (int p = 0; p < points; p++)
 	{
-		const ImU32 fill = (p == hover || (drag_item == item && p == drag_index))
+		const ImU32 fill = (p == hover || (g_poly_drag.item == item && p == g_poly_drag.index))
 		                       ? IM_COL32 (255, 210, 120, 255)
 		                       : IM_COL32 (255, 255, 255, 255);
 
@@ -2636,6 +3040,8 @@ int QR_GUI_Dialog (const char *title, const char *text, const char *yes, const c
 
 void QR_GUI_Notify (const char *text)
 {
+	if (!g_ready)
+		return;
 	snprintf (g_notify, sizeof (g_notify), "%s", text ? text : "");
 	g_notify_time = ImGui::GetTime ();
 }
@@ -2817,7 +3223,18 @@ void QR_GUI_LabelBottomRight (const char *text)
 // gizmo).
 void QR_GUI_GetMousePos (float *x, float *y)
 {
-	const ImVec2 pos = ImGui::GetIO ().MousePos;
+	if (!g_ready)
+	{
+		if (x)
+			*x = 0.0f;
+		if (y)
+			*y = 0.0f;
+		return;
+	}
+
+	const ImVec2 pos = g_has_cached_mouse_pos
+	    ? ImVec2 (g_cached_mouse_x, g_cached_mouse_y)
+	    : ImGui::GetIO ().MousePos;
 
 	if (x)
 		*x = pos.x;
@@ -2845,11 +3262,12 @@ void QR_GUI_DrawPolyline (const float *xy, int count, uint32_t argb, float thick
 
 void QR_GUI_DrawCircle (float cx, float cy, float radius, uint32_t argb, float thickness)
 {
-	if (radius <= 0.0f)
+	if (!std::isfinite (cx) || !std::isfinite (cy) || !std::isfinite (radius) || radius <= 0.0f)
 		return;
 
-	ImGui::GetBackgroundDrawList ()->AddCircle (ImVec2 (cx, cy), radius, PackedColorToU32 (argb), 0,
-	                                            thickness > 0.0f ? thickness : 1.0f);
+	ImGui::GetBackgroundDrawList ()->AddCircle (
+	    ImVec2 (cx, cy), radius, PackedColorToU32 (argb), 0,
+	    (std::isfinite (thickness) && thickness > 0.0f) ? thickness : 1.0f);
 }
 
 // ----- the rt_stats readout -----
@@ -2878,6 +3296,17 @@ ImFont *g_overlay_mono_font = nullptr;
 
 bool g_overlay_group = false;
 bool g_overlay_first = true;
+
+void ResetOverlayState (void)
+{
+	g_overlay_scale = 1.0f;
+	g_overlay_font_size = kOverlayBaseFont;
+	g_overlay_font = nullptr;
+	g_overlay_mono_size = kOverlayBaseFont;
+	g_overlay_mono_font = nullptr;
+	g_overlay_group = false;
+	g_overlay_first = true;
+}
 
 void OverlaySparkline (ImDrawList *dl, const ImVec2 &p, float w, float h, const float *v, int n, ImU32 col)
 {

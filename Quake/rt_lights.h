@@ -16,10 +16,12 @@
 
 // The most entries a lights.yaml list (and a session) can hold.
 #define RT_LIGHT_NAMES_MAX 256
+// Wide enough for a MAX_QPATH emitter name plus a "#<uint64>" instance suffix.
+#define RT_LIGHT_NAME_MAX  (MAX_QPATH + 24)
 
 typedef struct rt_light_s
 {
-    char     name[MAX_QPATH];  // the emitter the light belongs to (a texture name)
+    char     name[RT_LIGHT_NAME_MAX]; // the emitter the light belongs to (a texture name or name#id)
     qboolean valid;
     qboolean has_radius;
     float    radius;           // the size of the light, in the units of rt_dlight_radius
@@ -81,14 +83,17 @@ void RT_LIGHT_WriteEntry (FILE *f, const rt_light_t *l);
 const char *RT_LIGHT_Header (void);
 // The names a lights.yaml carries ("- name: x" lines; comments and quotes are
 // understood). Returns the count.
-int  RT_LIGHT_ReadNames (const char *path, char (*names)[MAX_QPATH], int max);
+int  RT_LIGHT_ReadNames (const char *path, char (*names)[RT_LIGHT_NAME_MAX], int max);
 // Writes the named entries from the live list into lights.yaml; an entry with no
 // field authored is not written. Returns false when nothing was written (the
 // file is not created then, or removed if it existed).
-qboolean RT_LIGHT_Write (const char *path, char (*names)[MAX_QPATH], int count);
+qboolean RT_LIGHT_Write (const char *path, char (*names)[RT_LIGHT_NAME_MAX], int count);
 
 // True when at least one field is authored (what the writer asks).
 qboolean RT_LIGHT_HasFields (const rt_light_t *l);
+// True when name (normalized) had an emitter override loaded from a lower-
+// precedence lights file (before com_gamedir's loose qray.lights.yaml).
+qboolean RT_LIGHT_HasInheritedOverride (const char *name);
 
 // ----- the lights of the frame, for the editor's wireframes and picking -----
 
@@ -154,6 +159,8 @@ typedef struct rt_emitter_light_s
     float       modelSize;
     qboolean    light_shafts;
     float       light_shafts_power;
+    float       light_shafts_distance;
+    float       light_shafts_falloff;
 } rt_emitter_light_t;
 
 typedef struct rt_emitter_resolved_s
@@ -209,6 +216,8 @@ typedef struct rt_custom_light_s
     float    angle_outer;
     qboolean light_shafts;
     float    light_shafts_power;
+    float    light_shafts_distance;
+    float    light_shafts_falloff;
 } rt_custom_light_t;
 
 // The fog a level's section carries: it replaces the map's own worldspawn "fog"
@@ -266,18 +275,35 @@ qboolean RT_SkySettings_LevelHasBlock (void);
 // The editor's Global settings checkbox: swapping the scope takes the live
 // values into the set they were edited in and puts the other set on screen.
 void RT_SkySettings_SetScope (qboolean level);
-// Whether this session changed the sky settings or their scope at all.
+// Swaps the active scope and applies its stored values without capturing the
+// current live cvars into the previous scope first (used on Cancel/Reset).
+void RT_SkySettings_SetScopeNoCapture (qboolean level);
+// Whether the active sky scope is level-local (true) or global (false).
+qboolean RT_SkySettings_IsLevelScope (void);
+// Session-start baseline string for cvar in the currently active scope (global
+// baseline when global scope is active; level override or global fallback when
+// level scope is active). Returns NULL outside a session or for non-sky cvars.
+const char *RT_SkySettings_ActiveBaseline (const char *cvar);
+// Whether this session changed the level's "sky:" block, the global config
+// sky settings, or either of them.
+qboolean RT_SkySettings_LevelDirty (void);
+qboolean RT_SkySettings_GlobalDirty (void);
 qboolean RT_SkySettings_SessionDirty (void);
 // The live values belong to the active set, for the session's writer.
 void RT_SkySettings_CaptureScope (void);
 // Writes the level's "sky:" block (its own set) for the editor's session file;
 // returns the entries written.
 int  RT_SkySettings_WriteLevel (FILE *f);
-// The editor session: BeginSession snapshots the state, EndSession (Discard, or
-// an editor closed without saving) puts it back, and CommitSession (a save)
-// makes what the save carried the state -- in global scope the level's own set
-// goes away with the file's block.
+// The editor session: BeginSession snapshots the state (disk baseline and
+// initial checkpoint), CheckpointSession updates the Cancel checkpoint after
+// Apply while keeping the disk baseline intact, RestoreCheckpoint reverts to
+// the last checkpoint while keeping the session active, EndSession (Discard, or
+// an editor closed without saving) puts the disk baseline back, and
+// CommitSession (a save) makes what the save carried the state -- in global
+// scope the level's own set goes away with the file's block.
 void RT_SkySettings_BeginSession (void);
+void RT_SkySettings_CheckpointSession (void);
+void RT_SkySettings_RestoreCheckpoint (void);
 void RT_SkySettings_EndSession (void);
 void RT_SkySettings_CommitSession (qboolean global_scope);
 // The live values become the globals (the editor's Reset).

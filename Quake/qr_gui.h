@@ -18,17 +18,25 @@ extern "C" {
 #endif
 
 // Creates the ImGui context, the SDL2 input backend and the font atlas.
-// qr_instance is the QrInstance the draw lists are uploaded to; font_path may
-// be NULL, the default ImGui font is used then.
+// qr_instance is the QrInstance the draw lists are uploaded to; font_data (if
+// non-NULL, allocated with malloc) transfers ownership to the bridge and is
+// freed on failure/early-return or during QR_GUI_Shutdown. Passing NULL uses
+// the default ImGui font.
 void QR_GUI_Init (void *sdl_window, void *qr_instance, void *font_data, int font_size);
 int  QR_GUI_Ready (void);
 void QR_GUI_Shutdown (void);
 
-// One ImGui frame. SCR_UpdateScreen can run more than once per host frame, so
-// the frame id guards against a second NewFrame; returns 0 when the id was
-// already started. The viewport is the drawable rect in GL convention
-// (x, y, width, height) plus the height of the whole drawable (for the Vulkan
-// Y flip of the viewport).
+// Runs main-thread-only SDL2 platform updates (window metrics, mouse/focus
+// sync, deferred clipboard/IME flushes) before the render task graph is
+// submitted, so SCR_DrawGUI on a worker thread never touches SDL2 APIs.
+void QR_GUI_PrepareMainThreadFrame (float dt);
+
+// One ImGui frame. Returns 0 when the bridge is not ready or a frame is
+// already open (nested callers like RT_DtalDebugDrawGui reuse the active
+// frame). frame_id is kept for ABI compatibility; multiple SCR_UpdateScreen
+// calls within the same host frame are allowed once the prior frame ends. The
+// viewport is the drawable rect in GL convention (x, y, width, height) plus
+// the height of the whole drawable (for the Vulkan Y flip of the viewport).
 int  QR_GUI_BeginFrame (unsigned int frame_id, float dt, int x, int y, int width, int height, int drawable_height);
 
 // Builds the draw data and uploads it to the rasterizer. Must be called in the
@@ -38,6 +46,11 @@ void QR_GUI_EndFrame (void);
 // Feeds one SDL_Event (as const void *) into ImGui, returns 1 if the GUI wants
 // the event and the engine must not handle it.
 int  QR_GUI_ProcessEvent (const void *sdl_event);
+
+// Clears stuck ImGui key/modifier/mouse button state and queued input events
+// across UI mode transitions (panel open/close, chooser, dialog close). Safe
+// no-op when the bridge is not ready.
+void QR_GUI_ClearInputState (void);
 
 // Returns 1 while the GUI owns the mouse (the panel is open).
 int  QR_GUI_WantsMouse (void);
@@ -96,8 +109,9 @@ int  QR_GUI_ComboFiltered (const char *label, int *value, const char *const *ite
 // the selection changed (the caller draws the content of *selected itself).
 int  QR_GUI_Tabs (const char *id, const char *const *items, int count, int *selected, int *reset_pressed);
 int  QR_GUI_InputText (const char *label, char *buf, size_t capacity, const char *tooltip);
-// A row of three floats (X, Y, Z) on one line, clamped to min..max. Returns 1
-// when any of them changed.
+// A row of three floats (X, Y, Z) on one line; edited axes are clamped to
+// min..max while unedited axes are left untouched. Returns a bitmask
+// (1 << axis: 1 = X, 2 = Y, 4 = Z) of axes edited on this frame.
 int  QR_GUI_Vec3Input (const char *label, float v[3], float min, float max, const char *tooltip);
 int  QR_GUI_Vec3InputMixed (const char *label, float v[3], float min, float max, const unsigned char mixed[3], const char *tooltip);
 // A path field with a "..." button: returns 1 when the text changed and 2 when

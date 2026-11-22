@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // comndef.h  -- general definitions
 
+#if defined(_WIN32)
 #ifdef _MSC_VER
 #pragma warning(disable : 4244)
 /* 'argument'	: conversion from 'type1' to 'type2',
@@ -36,6 +37,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 /* 'var'	: conversion from 'size_t' to 'type',
           possible loss of data (/Wp64 warning) */
 #endif /* _MSC_VER */
+#endif /* _WIN32 */
 
 #undef min
 #undef max

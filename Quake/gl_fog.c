@@ -83,8 +83,16 @@ void Fog_Update (float density, float red, float green, float blue, float time)
 	fog_red = red;
 	fog_green = green;
 	fog_blue = blue;
-	fade_time = time;
-	fade_done = cl.time + time;
+	if (time > 0.0f)
+	{
+		fade_time = time;
+		fade_done = cl.time + time;
+	}
+	else
+	{
+		fade_time = 0.0f;
+		fade_done = 0.0f;
+	}
 }
 
 /*
@@ -343,6 +351,7 @@ called whenever a map is loaded
 */
 void Fog_NewMap (void)
 {
+	Cvar_SetROM ("fog_enabled", "0");
 	Fog_ParseWorldspawn (); // for global fog
 	Fog_MarkModels ();      // for volumetric fog
 }

@@ -5,6 +5,12 @@
 #include "rt_material.h"
 #include "rt_pkz.h"
 
+#include <errno.h>
+
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+
 #include <yaml.h>
 
 #ifdef _MSC_VER
@@ -71,20 +77,23 @@ static void rt_load_file_free(byte *data)
     Mem_Free(data);
 }
 
+#define RT_TGA_MAX_DIM 16384
+
 static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
 {
-    if (len < 18)
+    if (!buf || len < 18)
     {
         return NULL;
     }
 
-    const byte id_length = buf[0];
-    const byte colormap_type = buf[1];
-    const byte image_type = buf[2];
-    const int width = buf[12] | (buf[13] << 8);
-    const int height = buf[14] | (buf[15] << 8);
-    const byte pixel_size = buf[16];
-    const byte attributes = buf[17];
+    const size_t ulen = (size_t)len;
+    const byte   id_length = buf[0];
+    const byte   colormap_type = buf[1];
+    const byte   image_type = buf[2];
+    const int    width = (int)buf[12] | ((int)buf[13] << 8);
+    const int    height = (int)buf[14] | ((int)buf[15] << 8);
+    const byte   pixel_size = buf[16];
+    const byte   attributes = buf[17];
 
     if (colormap_type != 0)
     {
@@ -98,41 +107,75 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
     {
         return NULL;
     }
-    if (width <= 0 || height <= 0)
+    if (width <= 0 || height <= 0 || width > RT_TGA_MAX_DIM || height > RT_TGA_MAX_DIM)
     {
         return NULL;
     }
 
+    size_t pos = 18u + (size_t)id_length;
+    if (pos > ulen)
+    {
+        return NULL;
+    }
+
+    const size_t bpp = (size_t)(pixel_size / 8);
+    const size_t uw = (size_t)width;
+    const size_t uh = (size_t)height;
+    if (uh > SIZE_MAX / uw)
+    {
+        return NULL;
+    }
+    const size_t numPixels = uw * uh;
+    if (numPixels > SIZE_MAX / 4u)
+    {
+        return NULL;
+    }
+
+    // Reject truncated files before allocating the output buffer.
+    if (image_type == 2)
+    {
+        if (numPixels > (ulen - pos) / bpp)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        // Each RLE packet consumes at least 1 + bpp bytes and encodes at most 128 pixels.
+        const size_t minPackets = (numPixels + 127u) / 128u;
+        if (minPackets > (ulen - pos) / (1u + bpp))
+        {
+            return NULL;
+        }
+    }
+
     const qboolean upside_down = !(attributes & 0x20);
-    const int numPixels = width * height;
-    byte *out = (byte *)Mem_Alloc(numPixels * 4);
+    const size_t   rowStride = uw * 4u;
+    byte          *out = (byte *)Mem_Alloc(numPixels * 4u);
     if (!out)
     {
         return NULL;
     }
 
-    int pos = 18 + id_length;
-    const int bpp = pixel_size / 8;
-
     for (int row = height - 1; row >= 0; row--)
     {
-        const int realrow = upside_down ? row : height - 1 - row;
-        byte *pixbuf = out + realrow * width * 4;
+        const size_t realrow = (size_t)(upside_down ? row : (height - 1 - row));
+        byte        *pixbuf = out + realrow * rowStride;
 
         for (int column = 0; column < width; column++)
         {
             if (image_type == 10)
             {
-                if (pos >= len)
+                if (pos >= ulen)
                 {
                     Mem_Free(out);
                     return NULL;
                 }
                 const byte packet = buf[pos++];
-                const int count = (packet & 0x7f) + 1;
+                const int  count = (int)(packet & 0x7f) + 1;
                 if (packet & 0x80)
                 {
-                    if (pos + bpp > len || column + count > width)
+                    if (bpp > ulen - pos || count > width - column)
                     {
                         Mem_Free(out);
                         return NULL;
@@ -140,7 +183,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                     const byte r = buf[pos + 2];
                     const byte g = buf[pos + 1];
                     const byte b = buf[pos + 0];
-                    const byte a = (bpp == 4) ? buf[pos + 3] : 255;
+                    const byte a = (bpp == 4u) ? buf[pos + 3] : 255;
                     pos += bpp;
                     for (int k = 0; k < count; k++)
                     {
@@ -150,17 +193,17 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                 }
                 else
                 {
+                    if (count > width - column || (size_t)count > (ulen - pos) / bpp)
+                    {
+                        Mem_Free(out);
+                        return NULL;
+                    }
                     for (int k = 0; k < count; k++)
                     {
-                        if (pos + bpp > len || column + k >= width)
-                        {
-                            Mem_Free(out);
-                            return NULL;
-                        }
                         *pixbuf++ = buf[pos + 2];
                         *pixbuf++ = buf[pos + 1];
                         *pixbuf++ = buf[pos + 0];
-                        *pixbuf++ = (bpp == 4) ? buf[pos + 3] : 255;
+                        *pixbuf++ = (bpp == 4u) ? buf[pos + 3] : 255;
                         pos += bpp;
                     }
                     column += count - 1;
@@ -168,7 +211,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
             }
             else
             {
-                if (pos + bpp > len)
+                if (bpp > ulen - pos)
                 {
                     Mem_Free(out);
                     return NULL;
@@ -176,7 +219,7 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
                 *pixbuf++ = buf[pos + 2];
                 *pixbuf++ = buf[pos + 1];
                 *pixbuf++ = buf[pos + 0];
-                *pixbuf++ = (bpp == 4) ? buf[pos + 3] : 255;
+                *pixbuf++ = (bpp == 4u) ? buf[pos + 3] : 255;
                 pos += bpp;
             }
         }
@@ -219,7 +262,10 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         while (*src == '/' || *src == '\\')
             src++;
         while (*src && dst < norm + sizeof (norm) - 1)
-            *dst++ = (*src == '\\') ? '/' : *src++;
+        {
+            const char c = *src++;
+            *dst++ = (c == '\\') ? '/' : c;
+        }
         *dst = '\0';
     }
     base = norm;
@@ -261,8 +307,8 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         return decoded;
     }
 
-    static const char *exts[] = { "tga", "jpg", "png" };
-    for (int e = 0; e < 3; e++)
+    static const char *exts[] = { "tga", "jpg", "jpeg", "png" };
+    for (int e = 0; e < (int)(sizeof(exts) / sizeof(exts[0])); e++)
     {
         char name[MAX_QPATH];
         q_snprintf(name, sizeof(name), "%s.%s", base, exts[e]);
@@ -325,6 +371,8 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->texture_scale_v = 1.0f;
     mat->light_brightness = 1.0f;
     mat->light_shafts_power = 1.0f;
+    mat->light_shafts_distance = 0.0f;
+    mat->light_shafts_falloff = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
 }
@@ -464,7 +512,16 @@ const char *RT_MAT_EmissiveBlendName(int blend)
 // A blend mode by number or by any of its aliases; -2 when it is neither.
 static int rt_mat_parse_emissive_blend(const char *value)
 {
-    int v;
+    char *end = NULL;
+    long  v;
+
+    if (!value)
+        return -2;
+
+    while (*value == ' ' || *value == '\t')
+        value++;
+    if (!*value)
+        return -2;
 
     if (!q_strcasecmp(value, "cvar"))                                      return -1;
     if (!q_strcasecmp(value, "off") || !q_strcasecmp(value, "none"))       return 0;
@@ -474,16 +531,25 @@ static int rt_mat_parse_emissive_blend(const char *value)
     if (!q_strcasecmp(value, "overlay"))                                   return 3;
     if (!q_strcasecmp(value, "hard light") || !q_strcasecmp(value, "hard_light") ||
         !q_strcasecmp(value, "hardlight"))                                 return 4;
-    if (!q_strcasecmp(value, "color dodge") || !q_strcasecmp(value, "color dodge") ||
-        !q_strcasecmp(value, "color_dodge") || !q_strcasecmp(value, "color_dodge") ||
+    if (!q_strcasecmp(value, "color dodge") || !q_strcasecmp(value, "color_dodge") ||
+        !q_strcasecmp(value, "colordodge") ||
         !q_strcasecmp(value, "dodge") || !q_strcasecmp(value, "divide"))   return 5;
 
-    v = atoi(value);
-    if (v < -1 || v > RT_MAT_EMIS_BLEND_MAX)
+    errno = 0;
+    v = strtol(value, &end, 10);
+    if (errno != 0 || end == value)
     {
         return -2;
     }
-    return v;
+    while (*end == ' ' || *end == '\t')
+    {
+        end++;
+    }
+    if (*end != '\0' || v < -1 || v > RT_MAT_EMIS_BLEND_MAX)
+    {
+        return -2;
+    }
+    return (int)v;
 }
 
 static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char *value)
@@ -548,6 +614,10 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         mat->light_shafts = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_shafts_power"))
         mat->light_shafts_power = CLAMP(0.0f, (float)atof(value), 16.0f);
+    else if (!q_strcasecmp(key, "light_shafts_distance"))
+        mat->light_shafts_distance = CLAMP(0.0f, (float)atof(value), 25.0f);
+    else if (!q_strcasecmp(key, "light_shafts_falloff"))
+        mat->light_shafts_falloff = CLAMP(0.0f, (float)atof(value), 4.0f);
     else if (!q_strcasecmp(key, "is_light"))
         mat->is_light = rt_mat_parse_bool(value);
     else if (!q_strcasecmp(key, "light_styles"))
@@ -746,7 +816,6 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
     if (!yaml_parser_initialize(&parser))
     {
-        rt_load_file_free((byte *)filebuf);
         return 0;
     }
 
@@ -966,18 +1035,27 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
     return count;
 }
 
-static int rt_mat_load_yaml_file(const char *file_name, rt_material_t *dest, int max_items)
+static qboolean rt_mat_is_editor_temp_name(const char *path)
 {
-    int   len = 0;
-    char *filebuf = (char *)rt_load_file(file_name, &len);
-    int   count;
+    const char *base;
+    const char *slash;
+    const char *bslash;
 
-    if (!filebuf)
-        return 0;
+    if (!path)
+        return false;
 
-    count = rt_mat_parse_yaml(filebuf, len, file_name, dest, max_items);
-    rt_load_file_free((byte *)filebuf);
-    return count;
+    slash = strrchr(path, '/');
+    bslash = strrchr(path, '\\');
+    base = path;
+    if (slash && slash + 1 > base)
+        base = slash + 1;
+    if (bslash && bslash + 1 > base)
+        base = bslash + 1;
+
+    return (!q_strcasecmp(base, "materials.editor.yaml") ||
+            !q_strcasecmp(base, "backup_materials.yaml") ||
+            !q_strcasecmp(base, "qray.materials.editor.yaml") ||
+            !q_strcasecmp(base, "qray.backup_materials.yaml")) ? true : false;
 }
 
 static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_items)
@@ -1010,87 +1088,100 @@ static int rt_mat_load_abs_file(const char *path, rt_material_t *dest, int max_i
     return count;
 }
 
-static int rt_mat_load_any(const char *name, rt_material_t *dest, int max_items)
-{
-    if (name[0] && (name[1] == ':' || name[0] == '/' || name[0] == '\\'))
-        return rt_mat_load_abs_file(name, dest, max_items);
-    return rt_mat_load_yaml_file(name, dest, max_items);
-}
-
 static void rt_mat_load_dir(const char *dir, int (*cb)(const char *name, void *ctx), void *ctx)
 {
-    char pattern[MAX_OSPATH];
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
+	char pattern[MAX_OSPATH];
 
-    q_snprintf(pattern, sizeof(pattern), "%s/materials/*.yaml", dir);
-    h = FindFirstFileA(pattern, &fd);
-    if (h != INVALID_HANDLE_VALUE)
-    {
-        do
-        {
-            char path[MAX_OSPATH];
+#ifdef _WIN32
+	WIN32_FIND_DATAA fd;
+	HANDLE h;
 
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            {
-                continue;
-            }
-            // the editor's own files: the session file is not a materials file
-            // until it is saved, and the backup never is
-            if (!q_strcasecmp(fd.cFileName, "materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "backup_materials.yaml") ||
-                !q_strcasecmp(fd.cFileName, "qray.materials.editor.yaml") ||
-                !q_strcasecmp(fd.cFileName, "qray.backup_materials.yaml"))
-            {
-                continue;
-            }
-            q_snprintf(path, sizeof(path), "%s/materials/%s", dir, fd.cFileName);
-            if (cb(path, ctx))
-            {
-                break;
-            }
-        } while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
+	q_snprintf(pattern, sizeof(pattern), "%s/materials/*.yaml", dir);
+	h = FindFirstFileA(pattern, &fd);
+	if (h != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			char path[MAX_OSPATH];
 
-    q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
-    if (Sys_FileTime(pattern) != -1)
-    {
-        cb(pattern, ctx);
-    }
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				continue;
+			}
+			// the editor's own files: the session file is not a materials file
+			// until it is saved, and the backup never is
+			if (rt_mat_is_editor_temp_name(fd.cFileName))
+			{
+				continue;
+			}
+			q_snprintf(path, sizeof(path), "%s/materials/%s", dir, fd.cFileName);
+			if (cb(path, ctx))
+			{
+				break;
+			}
+		} while (FindNextFileA(h, &fd));
+		FindClose(h);
+	}
+#else
+	DIR *d;
+	struct dirent *e;
 
-    q_snprintf(pattern, sizeof(pattern), "%s/qray.materials.yaml", dir);
-    if (Sys_FileTime(pattern) != -1)
-    {
-        cb(pattern, ctx);
-    }
+	q_snprintf(pattern, sizeof(pattern), "%s/materials", dir);
+	d = opendir(pattern);
+	if (d)
+	{
+		while ((e = readdir(d)) != NULL)
+		{
+			char path[MAX_OSPATH];
+			size_t n = strlen(e->d_name);
+
+			if (n < 5 || q_strcasecmp(e->d_name + n - 5, ".yaml") != 0)
+			{
+				continue;
+			}
+			if (rt_mat_is_editor_temp_name(e->d_name))
+			{
+				continue;
+			}
+			q_snprintf(path, sizeof(path), "%s/materials/%s", dir, e->d_name);
+			if (cb(path, ctx))
+			{
+				break;
+			}
+		}
+		closedir(d);
+	}
+#endif
+
+	q_snprintf(pattern, sizeof(pattern), "%s/materials.yaml", dir);
+	if (Sys_FileTime(pattern) != -1)
+	{
+		cb(pattern, ctx);
+	}
+
+	q_snprintf(pattern, sizeof(pattern), "%s/qray.materials.yaml", dir);
+	if (Sys_FileTime(pattern) != -1)
+	{
+		cb(pattern, ctx);
+	}
 }
 
 typedef struct {
-    rt_material_t *dest;
-    int *count;
-    int max;
+	rt_material_t *dest;
+	int *count;
+	int max;
 } rt_mat_load_ctx_t;
 
-static int rt_mat_load_cb(const char *name, void *vctx)
+static void rt_mat_merge_loaded(rt_mat_load_ctx_t *ctx, int before, int loaded, const char *label)
 {
-    rt_mat_load_ctx_t *ctx = (rt_mat_load_ctx_t *)vctx;
-    const int before = *ctx->count;
-    int loaded, n, kept = 0;
-
-    if (before >= ctx->max)
-    {
-        return 1;
-    }
-
-    loaded = rt_mat_load_any(name, ctx->dest + before, ctx->max - before);
+    int n, kept = 0;
 
     for (n = 0; n < loaded; n++)
     {
         rt_material_t *loaded_mat = ctx->dest + before + n;
         int            old = -1, i;
 
-        for (i = 0; i < before; i++)
+        for (i = 0; i < before + kept; i++)
         {
             if (!q_strcasecmp(ctx->dest[i].name, loaded_mat->name))
             {
@@ -1105,31 +1196,294 @@ static int rt_mat_load_cb(const char *name, void *vctx)
         }
         else
         {
-            ctx->dest[before + kept++] = *loaded_mat;
+            if (kept != n)
+            {
+                ctx->dest[before + kept] = *loaded_mat;
+            }
+            kept++;
         }
     }
     *ctx->count = before + kept;
 
     if (loaded > 0)
     {
-        Con_Printf("RT: loaded %d materials from %s\n", loaded, name);
+        Con_Printf("RT: loaded %d materials from %s\n", loaded, label);
     }
+}
+
+static int rt_mat_load_buffer(const char *buf, int len, const char *label, rt_mat_load_ctx_t *ctx)
+{
+    const int before = *ctx->count;
+    int       loaded;
+
+    if (before >= ctx->max)
+    {
+        return 1;
+    }
+    if (!buf || len <= 0)
+    {
+        return 0;
+    }
+
+    loaded = rt_mat_parse_yaml(buf, len, label, ctx->dest + before, ctx->max - before);
+    rt_mat_merge_loaded(ctx, before, loaded, label);
+    return (*ctx->count >= ctx->max) ? 1 : 0;
+}
+
+static int rt_mat_load_cb(const char *name, void *vctx)
+{
+    rt_mat_load_ctx_t *ctx = (rt_mat_load_ctx_t *)vctx;
+    const int          before = *ctx->count;
+    int                loaded;
+
+    if (before >= ctx->max)
+    {
+        return 1;
+    }
+
+    loaded = rt_mat_load_abs_file(name, ctx->dest + before, ctx->max - before);
+    rt_mat_merge_loaded(ctx, before, loaded, name);
     return 0;
 }
 
-static void rt_mat_load_base_dirs(rt_mat_load_ctx_t *ctx)
+// Collects com_searchpaths into lowest-to-highest precedence order: tail-to-head
+// across roots/mods, with each directory's pak/pkz archives ordered before its
+// loose directory so loose overrides win over shipped archives in the same root.
+static searchpath_t **rt_mat_build_searchpath_order(int *outCount)
+{
+    searchpath_t  *s;
+    searchpath_t **rev;
+    searchpath_t **prec;
+    int            total = 0;
+    int            idx = 0;
+    int            i = 0;
+    int            out = 0;
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        total++;
+    }
+    if (total == 0)
+    {
+        *outCount = 0;
+        return NULL;
+    }
+
+    rev = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*rev));
+    prec = (searchpath_t **)Mem_Alloc((size_t)total * sizeof(*prec));
+
+    for (s = com_searchpaths; s; s = s->next)
+    {
+        rev[total - 1 - idx++] = s;
+    }
+
+    while (i < total)
+    {
+        if (!rev[i]->pack && !rev[i]->rt_pkz)
+        {
+            int j = i + 1;
+            int k;
+
+            while (j < total && (rev[j]->pack || rev[j]->rt_pkz))
+            {
+                j++;
+            }
+            for (k = i + 1; k < j; k++)
+            {
+                prec[out++] = rev[k];
+            }
+            prec[out++] = rev[i];
+            i = j;
+        }
+        else
+        {
+            prec[out++] = rev[i++];
+        }
+    }
+
+    Mem_Free(rev);
+    *outCount = out;
+    return prec;
+}
+
+static char *rt_mat_read_pack_file(const pack_t *pak, const char *filename, int *outLen)
 {
     int i;
 
-    for (i = 0; i < com_numbasedirs; i++)
+    if (!pak || !filename || !filename[0])
     {
-        char base[MAX_OSPATH];
+        return NULL;
+    }
 
-        q_snprintf(base, sizeof(base), "%s/id1", com_basedirs[i]);
-        if (!COM_PathMatches(base, com_gamedir))
+    for (i = 0; i < pak->numfiles; i++)
+    {
+        FILE  *f;
+        char  *buf;
+        size_t got;
+        int    filelen;
+
+        if (q_strcasecmp(pak->files[i].name, filename) != 0)
         {
-            rt_mat_load_dir(base, rt_mat_load_cb, ctx);
+            continue;
         }
+        filelen = pak->files[i].filelen;
+        if (filelen <= 0 || filelen > 64 * 1024 * 1024)
+        {
+            return NULL;
+        }
+        f = fopen(pak->filename, "rb");
+        if (!f)
+        {
+            return NULL;
+        }
+        if (fseek(f, pak->files[i].filepos, SEEK_SET) != 0)
+        {
+            fclose(f);
+            return NULL;
+        }
+        buf = (char *)Mem_Alloc((size_t)filelen + 1);
+        got = fread(buf, 1, (size_t)filelen, f);
+        fclose(f);
+        buf[got] = '\0';
+        if (outLen)
+        {
+            *outLen = (int)got;
+        }
+        return buf;
+    }
+
+    return NULL;
+}
+
+typedef struct {
+    const void        *archive;
+    rt_mat_load_ctx_t *mat_ctx;
+} rt_mat_pkz_ctx_t;
+
+static int rt_mat_load_pkz_file(const void *archive, const char *filename, rt_mat_load_ctx_t *ctx)
+{
+    int   len = 0;
+    byte *buf;
+    int   stop;
+
+    if (*ctx->count >= ctx->max)
+    {
+        return 1;
+    }
+
+    buf = RT_PKZ_LoadFile(archive, filename, &len);
+    if (!buf)
+    {
+        return 0;
+    }
+
+    stop = rt_mat_load_buffer((const char *)buf, len, filename, ctx);
+    Mem_Free(buf);
+    return stop;
+}
+
+static int rt_mat_load_pkz_cb(const char *name, void *vctx)
+{
+    rt_mat_pkz_ctx_t *pctx = (rt_mat_pkz_ctx_t *)vctx;
+
+    if (rt_mat_is_editor_temp_name(name))
+    {
+        return 0;
+    }
+    return rt_mat_load_pkz_file(pctx->archive, name, pctx->mat_ctx);
+}
+
+static void rt_mat_load_pkz(const void *archive, rt_mat_load_ctx_t *ctx)
+{
+    rt_mat_pkz_ctx_t pctx = { archive, ctx };
+
+    RT_PKZ_ListArchiveFiles(archive, "materials/", ".yaml", rt_mat_load_pkz_cb, &pctx);
+    rt_mat_load_pkz_file(archive, "materials.yaml", ctx);
+    rt_mat_load_pkz_file(archive, "qray.materials.yaml", ctx);
+}
+
+static void rt_mat_load_pack_file(const pack_t *pak, const char *filename, rt_mat_load_ctx_t *ctx)
+{
+    int   len = 0;
+    char *buf;
+
+    if (*ctx->count >= ctx->max)
+    {
+        return;
+    }
+
+    buf = rt_mat_read_pack_file(pak, filename, &len);
+    if (!buf)
+    {
+        return;
+    }
+
+    rt_mat_load_buffer(buf, len, filename, ctx);
+    Mem_Free(buf);
+}
+
+static void rt_mat_load_pack(const pack_t *pak, rt_mat_load_ctx_t *ctx)
+{
+    int i;
+
+    if (!pak)
+    {
+        return;
+    }
+
+    for (i = 0; i < pak->numfiles && *ctx->count < ctx->max; i++)
+    {
+        const char *name = pak->files[i].name;
+        size_t      len = strlen(name);
+
+        if (len < 15 || q_strncasecmp(name, "materials/", 10) != 0 ||
+            q_strcasecmp(name + len - 5, ".yaml") != 0)
+        {
+            continue;
+        }
+        if (rt_mat_is_editor_temp_name(name))
+        {
+            continue;
+        }
+        rt_mat_load_pack_file(pak, name, ctx);
+    }
+
+    rt_mat_load_pack_file(pak, "materials.yaml", ctx);
+    rt_mat_load_pack_file(pak, "qray.materials.yaml", ctx);
+}
+
+static void rt_mat_load_global(rt_mat_load_ctx_t *ctx)
+{
+    searchpath_t **prec;
+    int            count = 0;
+    int            i;
+
+    prec = rt_mat_build_searchpath_order(&count);
+    for (i = 0; i < count && *ctx->count < ctx->max; i++)
+    {
+        searchpath_t *s = prec[i];
+
+        if (s->rt_pkz)
+        {
+            rt_mat_load_pkz(s->rt_pkz, ctx);
+        }
+        else if (s->pack)
+        {
+            rt_mat_load_pack(s->pack, ctx);
+        }
+        else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+        {
+            rt_mat_load_dir(s->filename, rt_mat_load_cb, ctx);
+        }
+    }
+    if (prec)
+    {
+        Mem_Free(prec);
+    }
+
+    if (com_gamedir[0])
+    {
+        rt_mat_load_dir(com_gamedir, rt_mat_load_cb, ctx);
     }
 }
 
@@ -1148,13 +1502,7 @@ void RT_MAT_Init(void)
     rt_map_count = 0;
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
-
-    RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    rt_mat_load_base_dirs(&ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
-
-    rt_mat_load_cb("materials.yaml", &ctx);
-    rt_mat_load_cb("qray.materials.yaml", &ctx);
+    rt_mat_load_global(&ctx);
 
     rt_mat_cmd = Cmd_AddCommand2("rt_mat", RT_MAT_Cmd, src_command);
 }
@@ -1177,35 +1525,132 @@ void RT_MAT_Shutdown(void)
     RT_PKZ_Shutdown();
 }
 
+static void rt_mat_apply_gamedir_overrides(const char *path)
+{
+    rt_material_t *tmp;
+    int            loaded;
+    int            n, i;
+
+    if (Sys_FileTime(path) == -1)
+    {
+        return;
+    }
+
+    tmp = (rt_material_t *)Mem_Alloc((size_t)RT_MAT_MAX_GLOBAL * sizeof(*tmp));
+    loaded = rt_mat_load_abs_file(path, tmp, RT_MAT_MAX_GLOBAL);
+    if (loaded <= 0)
+    {
+        Mem_Free(tmp);
+        return;
+    }
+
+    // Refresh rt_global_materials with the latest saved com_gamedir overrides
+    // across map changes, and patch matching names already present in
+    // rt_map_materials so user overrides win over materials/<map>.yaml without
+    // duplicating unrelated global materials into rt_map_materials.
+    for (n = 0; n < loaded; n++)
+    {
+        const rt_material_t *m = &tmp[n];
+        int                  old = -1;
+
+        for (i = 0; i < rt_global_count; i++)
+        {
+            if (!q_strcasecmp(rt_global_materials[i].name, m->name))
+            {
+                old = i;
+                break;
+            }
+        }
+        if (old >= 0)
+        {
+            rt_global_materials[old] = *m;
+        }
+        else if (rt_global_count < RT_MAT_MAX_GLOBAL)
+        {
+            rt_global_materials[rt_global_count++] = *m;
+        }
+
+        for (i = 0; i < rt_map_count; i++)
+        {
+            if (!q_strcasecmp(rt_map_materials[i].name, m->name))
+            {
+                rt_map_materials[i] = *m;
+                break;
+            }
+        }
+    }
+
+    Con_Printf("RT: loaded %d materials from %s\n", loaded, path);
+    Mem_Free(tmp);
+}
+
 void RT_MAT_ChangeMap(const char *mapname)
 {
+    rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
+
     if (!rt_initialized)
     {
         return;
     }
 
     q_strlcpy(rt_current_map, mapname ? mapname : "", sizeof(rt_current_map));
-
     rt_map_count = 0;
 
-    char name[MAX_QPATH];
-    q_snprintf(name, sizeof(name), "materials/%s.yaml", mapname);
+    if (mapname && mapname[0])
+    {
+        char           rel[MAX_QPATH];
+        searchpath_t **prec;
+        int            count = 0;
+        int            i;
 
-    rt_mat_load_ctx_t ctx = { rt_map_materials, &rt_map_count, RT_MAT_MAX_MAP };
-    rt_mat_load_cb(name, &ctx);
+        q_snprintf(rel, sizeof(rel), "materials/%s.yaml", mapname);
 
+        prec = rt_mat_build_searchpath_order(&count);
+        for (i = 0; i < count && *ctx.count < ctx.max; i++)
+        {
+            searchpath_t *s = prec[i];
+
+            if (s->rt_pkz)
+            {
+                rt_mat_load_pkz_file(s->rt_pkz, rel, &ctx);
+            }
+            else if (s->pack)
+            {
+                rt_mat_load_pack_file(s->pack, rel, &ctx);
+            }
+            else if (s->filename[0] && (!com_gamedir[0] || !COM_PathMatches(s->filename, com_gamedir)))
+            {
+                char path[MAX_OSPATH];
+                q_snprintf(path, sizeof(path), "%s/%s", s->filename, rel);
+                if (Sys_FileTime(path) != -1)
+                {
+                    rt_mat_load_cb(path, &ctx);
+                }
+            }
+        }
+        if (prec)
+        {
+            Mem_Free(prec);
+        }
+
+        if (com_gamedir[0])
+        {
+            char ownmap[MAX_OSPATH];
+            q_snprintf(ownmap, sizeof(ownmap), "%s/%s", com_gamedir, rel);
+            if (Sys_FileTime(ownmap) != -1)
+            {
+                rt_mat_load_cb(ownmap, &ctx);
+            }
+        }
+    }
+
+    if (com_gamedir[0])
     {
         char own[MAX_OSPATH];
         q_snprintf(own, sizeof(own), "%s/materials.yaml", com_gamedir);
-        if (Sys_FileTime(own) != -1)
-        {
-            rt_mat_load_cb(own, &ctx);
-        }
+        rt_mat_apply_gamedir_overrides(own);
         q_snprintf(own, sizeof(own), "%s/qray.materials.yaml", com_gamedir);
-        if (Sys_FileTime(own) != -1)
-        {
-            rt_mat_load_cb(own, &ctx);
-        }
+        rt_mat_apply_gamedir_overrides(own);
     }
 }
 
@@ -1220,11 +1665,7 @@ void RT_MAT_Reload(void)
     rt_map_count = 0;
 
     rt_mat_load_ctx_t ctx = { rt_global_materials, &rt_global_count, RT_MAT_MAX_GLOBAL };
-    RT_PKZ_ListFiles("materials/", ".yaml", rt_mat_load_cb, &ctx);
-    rt_mat_load_base_dirs(&ctx);
-    rt_mat_load_dir(com_gamedir, rt_mat_load_cb, &ctx);
-    rt_mat_load_cb("materials.yaml", &ctx);
-    rt_mat_load_cb("qray.materials.yaml", &ctx);
+    rt_mat_load_global(&ctx);
 
     if (rt_current_map[0])
     {

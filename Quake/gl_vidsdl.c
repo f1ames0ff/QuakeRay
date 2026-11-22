@@ -33,6 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "rt_material.h"
 #include "rt_lights.h"
 #include "qr_editor.h"
+#include "snd_eq.h"
 #include "photocam.h"
 #include "observer.h"
 #include "../shared/rt_frame_policy.h"
@@ -3194,6 +3195,10 @@ void RT_GetAcidColor (float color[3])
 
 #define RAD2DEG(a) ((a) / M_PI_DIV_180)
 
+static atomic_uint32_t rt_sun_edit_pending;
+static float           rt_sun_edit_pitch;
+static float           rt_sun_edit_yaw;
+
 // The crosshair is the view vector of the frame, bob and weapon kick included,
 // and the sun goes exactly where it points. The light, the god rays and the sky
 // read rt_sky_sun_pitch/rt_sky_sun_yaw through AngleVectors and take -forward as the
@@ -3205,15 +3210,36 @@ void RT_UpdateSunEditor (void)
 	float pitch, yaw;
 
 	if (!CVAR_TO_BOOL (rt_sky_sun_edit) || !CVAR_TO_BOOL (rt_physical_sun))
-	{
 		return;
-	}
 
-	pitch = RAD2DEG (asin (CLAMP (-1.0f, vpn[2], 1.0f)));
-	yaw = anglemod (RAD2DEG (atan2 (vpn[1], vpn[0])) + 180.0f);
+	if (key_dest != key_game || (QR_Editor_Active () && !QR_Editor_Flying ()))
+		return;
 
-	Cvar_SetValueQuick (&rt_sky_sun_pitch, pitch);
-	Cvar_SetValueQuick (&rt_sky_sun_yaw, yaw);
+	pitch = (float)RAD2DEG (asin (CLAMP (-1.0f, vpn[2], 1.0f)));
+	yaw = anglemod ((float)RAD2DEG (atan2 (vpn[1], vpn[0])) + 180.0f);
+	if (yaw > 180.0f)
+		yaw -= 360.0f;
+
+	// Runs inside R_SetupViewBeforeMark on a render worker thread: publish the
+	// computed angles for main-thread cvar commit in RT_ApplyPendingSunEditor.
+	rt_sun_edit_pitch = pitch;
+	rt_sun_edit_yaw = yaw;
+	Atomic_StoreUInt32 (&rt_sun_edit_pending, 1);
+}
+
+void RT_ApplyPendingSunEditor (void)
+{
+	if (Tasks_IsWorker ())
+		return;
+
+	if (!Atomic_ExchangeUInt32 (&rt_sun_edit_pending, 0))
+		return;
+
+	if (!CVAR_TO_BOOL (rt_sky_sun_edit) || !CVAR_TO_BOOL (rt_physical_sun))
+		return;
+
+	Cvar_SetValueQuick (&rt_sky_sun_pitch, rt_sun_edit_pitch);
+	Cvar_SetValueQuick (&rt_sky_sun_yaw, rt_sun_edit_yaw);
 }
 
 void RT_GetSkyCloudsColor (float color[3])
@@ -3312,7 +3338,11 @@ static void GL_InitInstance (void)
 	SDL_VERSION (&wmInfo.version);
 	SDL_GetWindowWMInfo (draw_context, &wmInfo);
 
+#ifdef QR_USE_SURFACE_WIN32
 	QrWin32SurfaceCreateInfo win32Info = {.hinstance = wmInfo.info.win.hinstance, .hwnd = wmInfo.info.win.window};
+#elif QR_USE_SURFACE_XLIB
+	QrXlibSurfaceCreateInfo x11Info = {.dpy = wmInfo.info.x11.display, .window = wmInfo.info.x11.window};
+#endif
 
 	const char pShaderPath[] = RT_OVERRIDEN_FOLDER "shaders/";
 	const char pBlueNoisePath[] = RT_OVERRIDEN_FOLDER "textures/BlueNoise_LDR_RGBA_128.png";
@@ -3322,7 +3352,11 @@ static void GL_InitInstance (void)
 		.pAppName = "QuakeRay",
 		.pAppGUID = "8d1f551a-b0e4-4365-985c-5e1182f3c54a",
 
+#ifdef QR_USE_SURFACE_WIN32
 		.pWin32SurfaceInfo = &win32Info,
+#elif QR_USE_SURFACE_XLIB
+		.pXlibSurfaceCreateInfo = &x11Info,
+#endif
 		
 		.pfnPrint = RT_PrintMessage,
 
@@ -4472,6 +4506,7 @@ static void RT_SunEditChanged_f (cvar_t *var)
 
 	if (CVAR_TO_BOOL (rt_sky_sun_edit))
 	{
+		Atomic_StoreUInt32 (&rt_sun_edit_pending, 0);
 		Con_Printf ("Sun editor: the sun follows the crosshair, press fire to leave it there.\n");
 
 		if (!CVAR_TO_BOOL (rt_physical_sky))
@@ -4485,6 +4520,11 @@ static void RT_SunEditChanged_f (cvar_t *var)
 	}
 	else
 	{
+		if (!Tasks_IsWorker () && Atomic_ExchangeUInt32 (&rt_sun_edit_pending, 0) && CVAR_TO_BOOL (rt_physical_sun))
+		{
+			Cvar_SetValueQuick (&rt_sky_sun_pitch, rt_sun_edit_pitch);
+			Cvar_SetValueQuick (&rt_sky_sun_yaw, rt_sun_edit_yaw);
+		}
 		Con_Printf ("Sun placed: rt_sky_sun_pitch %s, rt_sky_sun_yaw %s\n", rt_sky_sun_pitch.string, rt_sky_sun_yaw.string);
 	}
 
@@ -4935,6 +4975,23 @@ void VID_Init (void)
 	vid_locked = true;
 }
 
+static void VID_UpdateMouseGrab (void)
+{
+	if (SNDEQ_DialogActive () || (QR_Editor_PanelOpen () && key_dest == key_game))
+	{
+		IN_FreeCursorForGui ();
+		SDL_ShowCursor (SDL_DISABLE);
+		QR_GUI_SetMouseCursor (1);
+	}
+	else if (key_dest == key_console || key_dest == key_menu)
+	{
+		if (modestate == MS_WINDOWED)
+			IN_Deactivate (true);
+		else if (modestate == MS_FULLSCREEN)
+			IN_Activate ();
+	}
+}
+
 /*
 ===================
 VID_Restart
@@ -4992,13 +5049,7 @@ static void VID_Restart (qboolean set_mode)
 	//
 	// update mouse grab
 	//
-	if (key_dest == key_console || key_dest == key_menu)
-	{
-		if (modestate == MS_WINDOWED)
-			IN_Deactivate (true);
-		else if (modestate == MS_FULLSCREEN)
-			IN_Activate ();
-	}
+	VID_UpdateMouseGrab ();
 
 	SCR_UpdateRelativeScale ();
 
@@ -5045,13 +5096,7 @@ void VID_Toggle (void)
 		Cursor_Init ();
 
 		// update mouse grab
-		if (key_dest == key_console || key_dest == key_menu)
-		{
-			if (modestate == MS_WINDOWED)
-				IN_Deactivate (true);
-			else if (modestate == MS_FULLSCREEN)
-				IN_Activate ();
-		}
+		VID_UpdateMouseGrab ();
 	}
 }
 

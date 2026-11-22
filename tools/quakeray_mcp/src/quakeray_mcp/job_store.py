@@ -3,9 +3,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 import uuid
 
 from .errors import EvidenceError
+from .platform_support import IS_WINDOWS
 
 
 class JobStore:
@@ -16,20 +18,46 @@ class JobStore:
 
     @contextmanager
     def locked(self):
-        import win32event
-        import win32api
-        handle = win32event.CreateMutex(None, False, self.lock_name)
+        if IS_WINDOWS:
+            import win32event
+            import win32api
+            handle = win32event.CreateMutex(None, False, self.lock_name)
+            owned = False
+            try:
+                result = win32event.WaitForSingleObject(handle, 5000)
+                if result not in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED):
+                    raise EvidenceError("LOCK_TIMEOUT", "Evidence store is occupied", retryable=True)
+                owned = True
+                yield
+            finally:
+                if owned:
+                    win32event.ReleaseMutex(handle)
+                win32api.CloseHandle(handle)
+            return
+
+        import fcntl
+        lock_file = self.root / ".store.lock"
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o666)
         owned = False
         try:
-            result = win32event.WaitForSingleObject(handle, 5000)
-            if result not in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED):
-                raise EvidenceError("LOCK_TIMEOUT", "Evidence store is occupied", retryable=True)
-            owned = True
+            deadline = time.monotonic() + 5.0
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    owned = True
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise EvidenceError("LOCK_TIMEOUT", "Evidence store is occupied", retryable=True) from exc
+                    time.sleep(0.05)
             yield
         finally:
             if owned:
-                win32event.ReleaseMutex(handle)
-            win32api.CloseHandle(handle)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            os.close(fd)
 
     def directory(self, identifier):
         if not isinstance(identifier, str) or not identifier.startswith("job_") or len(identifier) != 36:

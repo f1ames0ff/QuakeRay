@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from .errors import EvidenceError
+from .platform_support import DEFAULT_BUILD_SUBDIR
 
 
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -12,7 +13,7 @@ class ApprovedPaths:
     def __init__(self, root, import_roots=()):
         self.root = Path(root).resolve(strict=True)
         self.import_roots = tuple(Path(p).resolve() for p in import_roots)
-        self.runtime = (self.root / os.environ.get("QUAKERAY_BUILD", "build/Debug")).resolve()
+        self.runtime = (self.root / os.environ.get("QUAKERAY_BUILD", DEFAULT_BUILD_SUBDIR)).resolve()
         self.roots = (self.runtime, *self.import_roots)
 
     def resolve_import(self, value, extensions=None):

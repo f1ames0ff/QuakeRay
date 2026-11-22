@@ -41,7 +41,7 @@ typedef struct rt_emissive_s
    these sizes, and a snapshot of the lists must be allocated for them. */
 enum {
     RT_MAT_CAP_GLOBAL = 4096,
-    RT_MAT_CAP_MAP    = 1024,
+    RT_MAT_CAP_MAP    = 4096,
 };
 
 typedef struct rt_material_s {
@@ -68,6 +68,8 @@ typedef struct rt_material_s {
     qboolean emissive_projector;
     qboolean light_shafts;
     float    light_shafts_power;
+    float    light_shafts_distance;
+    float    light_shafts_falloff;
     float base_factor;
     qboolean is_light;
     qboolean light_styles;

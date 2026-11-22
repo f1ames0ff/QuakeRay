@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 import secrets
 import subprocess
+import sys
 import threading
 import shutil
-import stat
 import re
 import time
 import uuid
@@ -16,6 +16,7 @@ import uuid
 from .errors import EvidenceError
 from .job_store import JobStore
 from .parsers import load_analyzer, parse_stats
+from .platform_support import IS_WINDOWS, is_redirected_path
 from .run_records import prepare_records
 from .windows_process import ContainedProcess
 
@@ -24,6 +25,20 @@ TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
 
 
 def process_identity(pid):
+    if not IS_WINDOWS:
+        try:
+            stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+            rparen = stat_text.rfind(")")
+            if rparen < 0:
+                return None
+            fields = stat_text[rparen + 1 :].split()
+            if len(fields) < 20 or fields[0] == "Z":
+                return None
+            return fields[19]
+        except PermissionError:
+            return "unavailable"
+        except (OSError, ValueError):
+            return None
     import win32api
     import win32process
     try:
@@ -291,8 +306,7 @@ class JobManager:
             if not dry_run:
                 for record in removable:
                     directory = self.store.directory(record['job_id'])
-                    if any(path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-                           for path in directory.rglob('*')):
+                    if any(is_redirected_path(path) for path in directory.rglob('*')):
                         raise EvidenceError('PERMISSION_DENIED', 'Refusing cleanup of a job with redirected paths')
                     shutil.rmtree(directory)
             return {'dry_run': dry_run, 'jobs': plan, 'protected_completed_evidence': True}
@@ -333,6 +347,8 @@ class JobManager:
                         deadline_utc=datetime.fromtimestamp(deadline, timezone.utc).isoformat())
             path = directory / "request.json"
             path.write_text(json.dumps(spec, allow_nan=False), encoding="utf-8")
-            return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                    str(self.root / "tools/quakeray_mcp/worker.ps1"), "-Spec", str(path)]
+            if IS_WINDOWS:
+                return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                        str(self.root / "tools/quakeray_mcp/worker.ps1"), "-Spec", str(path)]
+            return [sys.executable, "-B", str(self.root / "tools/quakeray_mcp/worker.py"), "--spec", str(path)]
         return prepare

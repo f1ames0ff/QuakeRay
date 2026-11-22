@@ -399,8 +399,11 @@ static void RT_UploadSunLight (void)
 		// so they follow the sun too, including the fraction.
 		VectorScale (color, RT_SUN_LIGHT_INTENSITY_SCALE, color);
 
+		// Reserve a distinct uniqueID above flashlight (+0), custom lights
+		// (+1 .. +RT_CUSTOM_LIGHTS_MAX), and the editor torch
+		// (+1 + RT_CUSTOM_LIGHTS_MAX) so Custom Light #0 cannot shadow the sun.
 		QrDirectionalLightUploadInfo info = {
-			.uniqueID = (uint64_t)UINT32_MAX + 1,
+			.uniqueID = (uint64_t)UINT32_MAX + 2 + RT_CUSTOM_LIGHTS_MAX,
 			.color = {color[0], color[1], color[2]},
 			.direction = {forward[0], forward[1], forward[2]},
 			.angularDiameterDegrees = 0.05f,
@@ -466,6 +469,9 @@ static void RT_UploadAllDlights ()
 			light.angleInner = l->angleInner;
 			light.angleOuter = l->angleOuter;
 			light.light_shafts = true;
+			light.light_shafts_power = 1.0f;
+			light.light_shafts_distance = 0.0f;
+			light.light_shafts_falloff = 1.0f;
 		}
 
 		RT_LIGHT_Emit (&light);
@@ -482,7 +488,7 @@ static void RT_UploadAllDlights ()
 		for (int i = 0; i < custom_count; i++)
 		{
 			const rt_custom_light_t *l = &custom[i];
-			float                    intensity = (l->intensity > 0.0f) ? l->intensity : 1.0f;
+			float                    intensity = q_max (0.0f, l->intensity);
 
 			if (!RT_LightBudgetTake (1))
 			{
@@ -512,7 +518,9 @@ static void RT_UploadAllDlights ()
 				.position = {position[0], position[1], position[2]},
 				.radius = METRIC_TO_QUAKEUNIT (l->radius),
 				.lightShafts = l->light_shafts ? 1 : 0,
-				.lightShaftsPower = l->light_shafts_power > 0.0f ? l->light_shafts_power : 1.0f,
+				.lightShaftsPower = q_max (0.0f, l->light_shafts_power),
+				.lightShaftsDistance = q_max (0.0f, l->light_shafts_distance),
+				.lightShaftsFalloff = q_max (0.01f, l->light_shafts_falloff),
 			};
 
 			if (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f))
@@ -534,7 +542,9 @@ static void RT_UploadAllDlights ()
 					.angleOuter = angleOuter,
 					.angleInner = angleInner,
 					.lightShafts = l->light_shafts ? 1 : 0,
-					.lightShaftsPower = l->light_shafts_power > 0.0f ? l->light_shafts_power : 1.0f,
+					.lightShaftsPower = q_max (0.0f, l->light_shafts_power),
+					.lightShaftsDistance = q_max (0.0f, l->light_shafts_distance),
+					.lightShaftsFalloff = q_max (0.01f, l->light_shafts_falloff),
 				};
 
 				QrResult r = qrUploadSpotLight (vulkan_globals.instance, &spot);

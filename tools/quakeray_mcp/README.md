@@ -237,3 +237,7 @@ Statistical claims, all-map coverage, image/geometry/gameplay equivalence and mo
 are not implied by implementation completion or short integration tests. Visual/noise output
 remains diagnostic. The formal benefit pilot is excluded from current acceptance by owner
 decision; usability and actual agent-cost benefits will be evaluated later in practical use.
+
+## Linux support
+
+On Linux, `quakeray_mcp` defaults to `build/linux-debug` (`quakeray` binary) unless `QUAKERAY_BUILD` is set, inspects processes via `/proc`, locks job stores with `fcntl.flock`, contains opt-in jobs (`QUAKERAY_ENABLE_JOBS=1`) through a dedicated process-group supervisor (`worker.py` / `tests/perf/run_*.py`), and stores job/research state under `${XDG_STATE_HOME:-~/.local/state}/quakeray_mcp/<repo-id>/jobs`. Default configuration remains read-only (`QUAKERAY_ENABLE_JOBS=0`, `QUAKERAY_ENABLE_RESEARCH=0`).

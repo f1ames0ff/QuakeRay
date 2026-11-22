@@ -29,7 +29,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "sys.h"
 #include "texmgr_emissive.h"
 
+#if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
+#include <SDL2/SDL.h>
+#else
 #include "SDL.h"
+#endif
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_STATIC
@@ -40,6 +44,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "stb_image_resize.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
+
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
 static cvar_t gl_picmip = {"gl_picmip", "0", CVAR_NONE};
@@ -151,7 +163,7 @@ static qboolean TexMgr_ApplyMaterialFromMat (gltexture_t *glt, unsigned *albedoF
    sees the new revision sees a finished texture. What a texture emits (is_light, the mask, its
    glow extents) is read off those fields, and the DTAL piece cache of an alias model is only as
    fresh as the revision it was built and published under (see RT_AddAliasEmissiveLights). */
-atomic_uint32_t rt_material_revision = {0};
+atomic_uint32_t rt_material_revision;
 
 
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic)
@@ -1478,6 +1490,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtwater = false;
 		glt->rtlightshafts = false;
 		glt->rtlightshaftspower = 1.0f;
+		glt->rtlightshaftsdistance = 0.0f;
+		glt->rtlightshaftsfalloff = 1.0f;
 		glt->rtuvscale[0] = glt->rtuvscale[1] = 1.0f;
 		glt->rtuvoffset[0] = glt->rtuvoffset[1] = 0.0f;
 		glt->rtemissive = false;
@@ -1518,6 +1532,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtemisprojector = mat->emissive_projector;
 	glt->rtlightshafts = mat->light_shafts;
 	glt->rtlightshaftspower = mat->light_shafts_power;
+	glt->rtlightshaftsdistance = mat->light_shafts_distance;
+	glt->rtlightshaftsfalloff = mat->light_shafts_falloff;
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -1625,7 +1641,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	byte *normal = (byte *)Mem_Alloc (npix * 4);
 	byte *rasterAlbedo = overlayBuf && mat->material_glass ? (byte *)Mem_Alloc (npix * 4) : NULL;
 
-	const float baseFactor = (mat->base_factor > 0.0f) ? mat->base_factor : 1.0f;
+	const float baseFactor = (mat->base_factor >= 0.0f) ? mat->base_factor : 1.0f;
 	const float roughOverride = mat->roughness_override;
 
 	/* The transparency of a glass material rides the alpha of the synthesized
@@ -1969,6 +1985,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (colorEmis)  Mem_Free (colorEmis);
 	if (colorBlend) Mem_Free (colorBlend);
 	if (colorDist)  Mem_Free (colorDist);
+	if (colorRaw)   Mem_Free (colorRaw);
 
 	if (baseBuf) Mem_Free (baseBuf);
 	if (normBuf) Mem_Free (normBuf);
@@ -2368,6 +2385,8 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemisprojector = false;
 	glt->rtlightshafts = false;
 	glt->rtlightshaftspower = 1.0f;
+	glt->rtlightshaftsdistance = 0.0f;
+	glt->rtlightshaftsfalloff = 1.0f;
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;
@@ -2819,9 +2838,13 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 {
 	byte *src = NULL, *allocated = NULL, *out;
 	int   npix, i;
+	int   width, height;
 
 	if (!glt)
 		return NULL;
+
+	width = (int)glt->source_width;
+	height = (int)glt->source_height;
 
 	if (glt->source_file[0] && glt->source_offset)
 	{
@@ -2840,7 +2863,7 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 			fclose (f);
 			return NULL;
 		}
-		size = glt->source_width * glt->source_height;
+		size = width * height;
 		if (glt->source_format == SRC_RGBA)
 			size *= 4;
 		else if (glt->source_format == SRC_LIGHTMAP)
@@ -2861,21 +2884,21 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	}
 	else if (glt->source_file[0] && !glt->source_offset)
 	{
-		allocated = src = Image_LoadImage (glt->source_file, (int *)&glt->source_width, (int *)&glt->source_height);
+		allocated = src = Image_LoadImage (glt->source_file, &width, &height);
 	}
 	else if (!glt->source_file[0] && glt->source_offset)
 	{
 		src = (byte *)glt->source_offset;
 	}
 
-	if (!src || glt->source_width <= 0 || glt->source_height <= 0)
+	if (!src || width <= 0 || height <= 0)
 	{
 		if (allocated)
 			Mem_Free (allocated);
 		return NULL;
 	}
 
-	npix = glt->source_width * glt->source_height;
+	npix = width * height;
 	out = (byte *)Mem_Alloc (npix * 4);
 
 	switch (glt->source_format)
@@ -2906,9 +2929,9 @@ byte *TexMgr_LoadRgbaForPreview (gltexture_t *glt, int *outWidth, int *outHeight
 	if (out)
 	{
 		if (outWidth)
-			*outWidth = glt->source_width;
+			*outWidth = width;
 		if (outHeight)
-			*outHeight = glt->source_height;
+			*outHeight = height;
 	}
 	return out;
 }

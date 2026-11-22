@@ -14,12 +14,14 @@ from quakeray_mcp.windows_process import ContainedProcess
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKER = Path(__file__).parent / "fixtures/fake_worker.py"
-TEMP_ROOT = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "Temp/opencode"
-if not TEMP_ROOT.is_dir():
-    TEMP_ROOT = Path(tempfile.gettempdir())
+TEMP_ROOT = (
+    (Path(os.environ["LOCALAPPDATA"]) / "Temp/opencode")
+    if os.name == "nt" and "LOCALAPPDATA" in os.environ
+    else Path(tempfile.gettempdir())
+)
+TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
-@unittest.skipUnless(os.name == "nt", "Windows containment tests")
 class JobTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=TEMP_ROOT)

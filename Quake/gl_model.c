@@ -26,7 +26,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "rt_material.h"
-#include "rt_lights.h"
 
 static void      Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void      Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
@@ -2654,11 +2653,10 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 		break;
 	}
 
-	if (sv.modelname[0] && !q_strcasecmp (loadname, sv.name))
+	if ((sv.modelname[0] && !q_strcasecmp (loadname, sv.name)) ||
+	    (!sv.modelname[0] && cl.mapname[0] && !q_strcasecmp (loadname, cl.mapname)))
 	{
 		RT_MAT_ChangeMap (loadname);
-		RT_LIGHT_Reload ();
-		RT_CustomLights_ChangeMap (loadname);
 	}
 
 	// swap all the lumps
