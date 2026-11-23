@@ -1530,6 +1530,8 @@ static void RT_FlushBatch (cb_context_t *cbx, const rt_uploadsurf_state_t *s, ui
 			}
 		}
 
+		TexMgr_FillSubsurfaceUpload (diffuse_tex, &info);
+
 		const double prof_upload = RT_Prof_Begin ();
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
 		RT_Prof_End (RT_PROF_BRUSH_UPLOAD, prof_upload);

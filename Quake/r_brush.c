@@ -323,6 +323,8 @@ void DrawGLPoly (
 			.transform = *transform,
 		};
 
+		TexMgr_FillSubsurfaceUpload (tex, &info);
+
 		qrUploadLanePush (vulkan_globals.instance, is_sky ? QR_UPLOAD_LANE_SKY : QR_UPLOAD_LANE_BRUSH);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
 		qrUploadLanePop (vulkan_globals.instance);
