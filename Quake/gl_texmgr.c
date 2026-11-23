@@ -98,7 +98,7 @@ static QrMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 {
 	QrMaterialCreateFlags fs = 0;
 
-	if (glt->flags & TEXPREF_MIPMAP)
+	if (!(glt->flags & TEXPREF_MIPMAP))
 	{
 		fs |= QR_MATERIAL_CREATE_DONT_GENERATE_MIPMAPS_BIT;
 	}

@@ -662,6 +662,23 @@ if(BUILD_TESTING)
 
     add_test(NAME rt_light_admit_tests COMMAND rt_light_admit_tests)
 
+    add_executable(vid_texfilter_tests
+        tests/vid_texfilter_tests.c
+    )
+    target_include_directories(vid_texfilter_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/renderer/Include
+    )
+    target_compile_definitions(vid_texfilter_tests PRIVATE QR_STATIC)
+
+    if(MSVC)
+        target_compile_options(vid_texfilter_tests PRIVATE /W4)
+    else()
+        target_compile_options(vid_texfilter_tests PRIVATE -Wall -Wextra)
+    endif()
+
+    add_test(NAME vid_texfilter_tests COMMAND vid_texfilter_tests)
+
     add_executable(qray_cluster_lists_tests
         tests/qray_cluster_lists_tests.cpp
         Quake/rt_light_admit.c
