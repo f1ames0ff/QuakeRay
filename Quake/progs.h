@@ -366,6 +366,11 @@ extern globalvars_t *pr_global_struct;
 extern qcvm_t *qcvm;
 void           PR_SwitchQCVM (qcvm_t *nvm);
 
+static inline float *PR_SpawnParmPtr (int idx)
+{
+	return &qcvm->globals[(int)(offsetof (globalvars_t, parm1) / sizeof (float)) + idx];
+}
+
 extern builtin_t pr_ssqcbuiltins[];
 extern int       pr_ssqcnumbuiltins;
 extern builtin_t pr_csqcbuiltins[];

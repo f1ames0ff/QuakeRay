@@ -2466,7 +2466,7 @@ static void Host_Spawn_f (void)
 
 		// copy spawn parms out of the client_t
 		for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-			(&pr_global_struct->parm1)[i] = host_client->spawn_parms[i];
+			*PR_SpawnParmPtr (i) = host_client->spawn_parms[i];
 		if (pr_checkextension.value)
 		{ // extended spawn parms
 			for (; i < NUM_TOTAL_SPAWN_PARMS; i++)

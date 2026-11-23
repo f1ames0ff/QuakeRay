@@ -1058,7 +1058,9 @@ void RT_ClusterLightAddMulti (uint64_t uniqueID, const vec3_t origin, float reac
 
 	rt_cluster_reg_attempts++;
 
-	if (clusters != NULL && clusterCount > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
+	if (clusters == NULL)
+		clusterCount = 0;
+	else if (clusterCount > QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS)
 		clusterCount = QR_CLUSTER_LIGHT_MAX_SOURCES_CLUSTERS;
 
 	/* A light that registers twice in one frame keeps its slot, but not the position or the
@@ -1152,6 +1154,9 @@ static mleaf_t *RT_ResolveLightLeaf (const vec3_t origin, qmodel_t *wm)
 	};
 	static const float probeDists[3] = {2.0f, 8.0f, 24.0f};
 
+	if (wm == NULL || wm->leafs == NULL)
+		return NULL;
+
 	mleaf_t *leaf = Mod_PointInLeaf ((float *)origin, wm);
 	if (leaf && leaf != wm->leafs && leaf->contents != CONTENTS_SOLID)
 		return leaf;
@@ -1225,7 +1230,10 @@ void RT_PointClusterCacheSetEnabled (qboolean enabled)
 int RT_ResolvePointClusterUncached (const vec3_t p)
 {
 	qmodel_t *wm = cl.worldmodel;
-	mleaf_t  *leaf = RT_ResolveLightLeaf (p, wm);
+	if (wm == NULL || wm->leafs == NULL)
+		return 0;
+
+	mleaf_t *leaf = RT_ResolveLightLeaf (p, wm);
 
 	return leaf ? RT_MapWorldCluster ((int)(leaf - wm->leafs)) : 0;
 }

@@ -601,6 +601,29 @@ static void SVFTE_WriteStats (client_t *client, sizebuf_t *msg)
 		}
 	}
 }
+static void SVFTE_MergeEntityDeltas (client_t *client, struct entity_num_state_s *olds, struct entity_num_state_s *oldstop,
+                                     struct entity_num_state_s *news, struct entity_num_state_s *newstop)
+{
+	while (olds != NULL && olds != oldstop && news != NULL && news != newstop)
+	{
+		if (olds->num < news->num)
+			client->pendingentities_bits[(olds++)->num] = UF_REMOVE;
+		else if (news->num < olds->num)
+			client->pendingentities_bits[(news++)->num] = UF_RESET;
+		else
+		{
+			if (client->pendingentities_bits[news->num] & UF_REMOVE)
+				client->pendingentities_bits[news->num] = (client->pendingentities_bits[news->num] & ~UF_REMOVE) | UF_RESET2;
+			client->pendingentities_bits[news->num] |= MSGFTE_DeltaCalcBits (&olds->state, &news->state);
+			news++;
+			olds++;
+		}
+	}
+	while (olds != NULL && olds != oldstop)
+		client->pendingentities_bits[(olds++)->num] = UF_REMOVE;
+	while (news != NULL && news != newstop)
+		client->pendingentities_bits[(news++)->num] = UF_RESET;
+}
 static void SVFTE_CalcEntityDeltas (client_t *client)
 {
 	struct entity_num_state_s *olds, *news, *oldstop, *newstop;
@@ -621,39 +644,13 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	}
 
 	news = snapshot_entstate;
-	newstop = news + snapshot_numents;
+	newstop = (news != NULL) ? (news + snapshot_numents) : NULL;
 	olds = client->previousentities;
 	oldstop = (olds != NULL) ? (olds + client->numpreviousentities) : NULL;
 
 	// we have two sets of entity state, pvs culled etc already.
 	// figure out which flags changed,
-	for (;;)
-	{
-		if (olds == oldstop && news == newstop)
-			break;
-		if (news == newstop || (olds != oldstop && olds->num < news->num))
-		{
-			// old ent is no longer visible, so flag for removal.
-			client->pendingentities_bits[olds->num] = UF_REMOVE;
-			olds++;
-		}
-		else if (olds == oldstop || (news != newstop && news->num < olds->num))
-		{
-			// new ent is new this frame, so reset everything.
-			client->pendingentities_bits[news->num] = UF_RESET;
-			// don't need to calc the other bits here, resets are enough
-			news++;
-		}
-		else
-		{ // simple entity delta
-			// its flagged for removing, that's weird... must be some killer packetloss. turn that back into a reset or something
-			if (client->pendingentities_bits[news->num] & UF_REMOVE)
-				client->pendingentities_bits[news->num] = (client->pendingentities_bits[news->num] & ~UF_REMOVE) | UF_RESET2;
-			client->pendingentities_bits[news->num] |= MSGFTE_DeltaCalcBits (&olds->state, &news->state);
-			news++;
-			olds++;
-		}
-	}
+	SVFTE_MergeEntityDeltas (client, olds, oldstop, news, newstop);
 
 	// now we know what flags to apply, the client needs a copy of that state for the next frame too.
 	// outgoing data can just read off these states too, instead of needing to hit the edicts memory (which may be spread over multiple allocations, yay cache).
@@ -1654,13 +1651,25 @@ Initializes a client_t for a new net connection.  This will only be called
 once for a player each game, not once for each level change.
 ================
 */
+static void SV_ReadSpawnParms (float *out_parms)
+{
+	int i;
+
+	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
+		out_parms[i] = *PR_SpawnParmPtr (i);
+	for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
+	{
+		ddef_t *g = ED_FindGlobal (va ("parm%i", i + 1));
+		out_parms[i] = g ? qcvm->globals[g->ofs] : 0;
+	}
+}
+
 void SV_ConnectClient (int clientnum)
 {
 	edict_t          *ent;
 	client_t         *client;
 	int               edictnum;
 	struct qsocket_s *netconnection;
-	int               i;
 	float             spawn_parms[NUM_TOTAL_SPAWN_PARMS];
 
 	client = svs.clients + clientnum;
@@ -1704,8 +1713,7 @@ void SV_ConnectClient (int clientnum)
 	{
 		// call the progs to get default spawn parms for the new client
 		PR_ExecuteProgram (pr_global_struct->SetNewParms);
-		for (i = 0; i < NUM_TOTAL_SPAWN_PARMS; i++)
-			client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+		SV_ReadSpawnParms (client->spawn_parms);
 	}
 
 	SV_SendServerinfo (client);
@@ -2588,7 +2596,7 @@ int SV_SendPrespawnStatics (int idx)
 
 		if (svent->modelindex >= host_client->limit_models)
 			continue;
-		if (memcmp (&nullentitystate, svent, sizeof (nullentitystate)))
+		if (!EntityState_Equals (&nullentitystate, svent))
 			MSG_WriteStaticOrBaseLine (&host_client->message, -1, svent, host_client->protocol_pext2, sv.protocol, sv.protocolflags);
 	}
 	return idx;
@@ -2643,7 +2651,7 @@ int SV_SendPrespawnBaselines (int idx)
 		if (host_client->message.cursize > maxsize)
 			break;
 
-		if (memcmp (&nullentitystate, &svent->baseline, sizeof (nullentitystate)))
+		if (!EntityState_Equals (&nullentitystate, &svent->baseline))
 			MSG_WriteStaticOrBaseLine (&host_client->message, idx, &svent->baseline, host_client->protocol_pext2, sv.protocol, sv.protocolflags);
 
 		idx++;
@@ -2907,7 +2915,7 @@ transition to another level
 */
 void SV_SaveSpawnparms (void)
 {
-	int i, j;
+	int i;
 
 	svs.serverflags = pr_global_struct->serverflags;
 
@@ -2919,13 +2927,7 @@ void SV_SaveSpawnparms (void)
 		// call the progs to get default spawn parms for the new client
 		pr_global_struct->self = EDICT_TO_PROG (host_client->edict);
 		PR_ExecuteProgram (pr_global_struct->SetChangeParms);
-		for (j = 0; j < NUM_BASIC_SPAWN_PARMS; j++)
-			host_client->spawn_parms[j] = (&pr_global_struct->parm1)[j];
-		for (; j < NUM_TOTAL_SPAWN_PARMS; j++)
-		{
-			ddef_t *g = ED_FindGlobal (va ("parm%i", j + 1));
-			host_client->spawn_parms[j] = g ? qcvm->globals[g->ofs] : 0;
-		}
+		SV_ReadSpawnParms (host_client->spawn_parms);
 	}
 }
 

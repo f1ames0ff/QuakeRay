@@ -4070,6 +4070,14 @@ struct fragmentdecal_s
 	void (*callback) (void *ctx, vec3_t *points, size_t numpoints);
 	void *ctx;
 };
+static void Fragment_CopyVerts (vec3_t *outverts, vec3_t *inverts, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+		VectorCopy (inverts[i], outverts[i]);
+}
+
 static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int incount, float *plane, float planedist)
 {
 	float dotv[MAXFRAGMENTVERTS + 1];
@@ -4084,6 +4092,9 @@ static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int inco
 	float *p1, *p2;
 	float *out;
 #define FRAG_EPSILON (1.0 / 32) // 0.5
+
+	if (incount < 3 || incount > MAXFRAGMENTVERTS)
+		return 0;
 
 	for (i = 0; i < incount; i++)
 	{
@@ -4105,8 +4116,7 @@ static int Fragment_ClipPolyToPlane (vec3_t *inverts, vec3_t *outverts, int inco
 		return 0; // all were clipped
 	if (clippedcount == 0)
 	{ // none were clipped
-		for (i = 0; i < incount; i++)
-			VectorCopy (inverts[i], outverts[i]);
+		Fragment_CopyVerts (outverts, inverts, incount);
 		return incount;
 	}
 
@@ -4146,7 +4156,7 @@ static void Fragment_ClipPoly (fragmentdecal_t *dec, int numverts, vec3_t *inver
 	vec3_t d1, d2, n;
 	size_t numtris;
 
-	if (numverts > MAXFRAGMENTVERTS)
+	if (numverts < 3 || numverts > MAXFRAGMENTVERTS)
 		return;
 
 	if (r_decal_noperpendicular.value)

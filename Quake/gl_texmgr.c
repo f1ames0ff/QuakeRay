@@ -1659,7 +1659,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	   uses; the glass branch multiplies the refracted light by it. */
 	float glassT = mat->material_glass ? mat->transparency : 1.0f;
 
-	if (glassT != glassT)
+	if (isnan (glassT))
 		glassT = 1.0f;
 	if (glassT < 0.0f)
 		glassT = 0.0f;

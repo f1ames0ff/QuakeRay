@@ -482,6 +482,20 @@ typedef struct
 	char           filler[58];
 } pcxheader_t;
 
+static int Image_PCXGetByte (stdio_buffer_t *buf, FILE *f, byte *data)
+{
+	int c = Buf_GetC (buf);
+	if (c == EOF)
+	{
+		Buf_Free (buf);
+		fclose (f);
+		Mem_Free (data);
+		Sys_Error ("'%s' is a truncated PCX file", loadfilename);
+		return 0;
+	}
+	return c & 0xFF;
+}
+
 /*
 ============
 Image_LoadPCX
@@ -491,7 +505,7 @@ byte *Image_LoadPCX (FILE *f, int *width, int *height)
 {
 	pcxheader_t     pcx;
 	int             x, y, w, h, readbyte, runlength, start;
-	byte           *p, *data;
+	byte           *p, *data, *data_end;
 	byte            palette[768];
 	stdio_buffer_t *buf;
 
@@ -519,11 +533,16 @@ byte *Image_LoadPCX (FILE *f, int *width, int *height)
 	h = pcx.ymax - pcx.ymin + 1;
 
 	data = (byte *)Mem_Alloc ((w * h + 1) * 4); //+1 to allow reading padding byte on last line
+	data_end = data + ((size_t)w * (size_t)h + 1u) * 4u;
 
 	// load palette
 	fseek (f, start + com_filesize - 768, SEEK_SET);
 	if (fread (palette, 1, 768, f) != 768)
+	{
+		fclose (f);
+		Mem_Free (data);
 		Sys_Error ("'%s' is not a valid PCX file", loadfilename);
+	}
 
 	// back to start of image data
 	fseek (f, start + sizeof (pcx), SEEK_SET);
@@ -536,22 +555,25 @@ byte *Image_LoadPCX (FILE *f, int *width, int *height)
 
 		for (x = 0; x < (pcx.bytes_per_line);) // read the extra padding byte if necessary
 		{
-			readbyte = Buf_GetC (buf);
+			readbyte = Image_PCXGetByte (buf, f, data);
 
 			if (readbyte >= 0xC0)
 			{
 				runlength = readbyte & 0x3F;
-				readbyte = Buf_GetC (buf);
+				readbyte = Image_PCXGetByte (buf, f, data);
 			}
 			else
 				runlength = 1;
 
 			while (runlength--)
 			{
-				p[0] = palette[readbyte * 3];
-				p[1] = palette[readbyte * 3 + 1];
-				p[2] = palette[readbyte * 3 + 2];
-				p[3] = 255;
+				if (p + 4 <= data_end)
+				{
+					p[0] = palette[readbyte * 3];
+					p[1] = palette[readbyte * 3 + 1];
+					p[2] = palette[readbyte * 3 + 2];
+					p[3] = 255;
+				}
 				p += 4;
 				x++;
 			}

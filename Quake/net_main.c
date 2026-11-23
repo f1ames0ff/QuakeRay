@@ -718,15 +718,21 @@ qboolean NET_CanSendMessage (qsocket_t *sock)
 	return sfunc.CanSendMessage (sock);
 }
 
+static int NET_ClampedMaxClients (void)
+{
+	return CLAMP (0, svs.maxclients, MAX_SCOREBOARD);
+}
+
 int NET_SendToAll (sizebuf_t *data, double blocktime)
 {
-	double   start;
-	int      i;
-	int      count = 0;
-	qboolean msg_init[MAX_SCOREBOARD]; /* did we write the message to the client's connection	*/
-	qboolean msg_sent[MAX_SCOREBOARD]; /* did the msg arrive its destination (canSend state).	*/
+	double    start;
+	int       i;
+	int       count = 0;
+	const int maxclients = NET_ClampedMaxClients ();
+	qboolean  msg_init[MAX_SCOREBOARD] = {0}; /* did we write the message to the client's connection	*/
+	qboolean  msg_sent[MAX_SCOREBOARD] = {0}; /* did the msg arrive its destination (canSend state).	*/
 
-	for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
+	for (i = 0, host_client = svs.clients; i < maxclients; i++, host_client++)
 	{
 		/*
 		if (!host_client->netconnection)
@@ -757,7 +763,7 @@ int NET_SendToAll (sizebuf_t *data, double blocktime)
 	while (count)
 	{
 		count = 0;
-		for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
+		for (i = 0, host_client = svs.clients; i < maxclients; i++, host_client++)
 		{
 			if (!msg_init[i])
 			{

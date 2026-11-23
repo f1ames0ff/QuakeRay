@@ -657,9 +657,11 @@ break()
 */
 static void PF_break (void)
 {
+	intptr_t trap_addr = -4;
+
 	Con_Printf ("break statement\n");
-	*(int *)-4 = 0; // dump to debugger
-	                //	PR_RunError ("break statement");
+	*(volatile int *)trap_addr = 0; // dump to debugger
+	                                //	PR_RunError ("break statement");
 }
 
 /*
@@ -1674,7 +1676,7 @@ static void PF_sv_setspawnparms (void)
 	client = svs.clients + (i - 1);
 
 	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-		(&pr_global_struct->parm1)[i] = client->spawn_parms[i];
+		*PR_SpawnParmPtr (i) = client->spawn_parms[i];
 }
 
 /*

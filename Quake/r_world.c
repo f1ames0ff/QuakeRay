@@ -4614,10 +4614,9 @@ qboolean RT_IsLevelLightModel (const char *name)
 {
 	const char *base = name;
 	char        model[MAX_QPATH];
-	const char *colon;
+	char       *model_colon;
 	const char *list;
 	const char *p;
-	size_t      len;
 	cvar_t     *var;
 
 	if (!name || !name[0])
@@ -4635,12 +4634,10 @@ qboolean RT_IsLevelLightModel (const char *name)
 
 	/* A material is named after the texture frame ("progs/flame2.mdl:frame0");
 	   the list names the model, so the frame suffix is not part of the match. */
-	colon = strchr (base, ':');
-	len = colon ? (size_t)(colon - base) : strlen (base);
-	if (len >= sizeof (model))
-		len = sizeof (model) - 1;
-	memcpy (model, base, len);
-	model[len] = '\0';
+	q_strlcpy (model, base, sizeof (model));
+	model_colon = strchr (model, ':');
+	if (model_colon)
+		*model_colon = '\0';
 	base = model;
 
 	list = var->string;
@@ -4892,7 +4889,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 
 	rt_emissive_params_t params;
 
-	if (!RT_EmissiveLightParamsForTex (light_tex, &params))
+	if (!light_tex || !RT_EmissiveLightParamsForTex (light_tex, &params))
 	{
 		if (!light_tex || !light_tex->rtislight)
 		{
@@ -5027,7 +5024,7 @@ static void RT_AddEmissiveLight (const rt_uploadsurf_state_t *s)
 	}
 
 	rt_light_t *style_ov = RT_LIGHT_Find (light_tex->name);
-	const qboolean style_override = (style_ov && style_ov->has_style) ? true : false;
+	const qboolean style_override = (style_ov != NULL && style_ov->has_style);
 
 	if ((style_override || light_tex->rtlightstyles) && CVAR_TO_BOOL (rt_light_styles))
 	{

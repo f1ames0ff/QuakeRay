@@ -665,7 +665,7 @@ M_InScrollbar
 static qboolean M_InScrollbar ()
 {
 	return scrollbar_grab || (scrollbar_size && (m_mouse_x >= scrollbar_x) && (m_mouse_x <= (scrollbar_x + 8)) && (m_mouse_y >= scrollbar_y) &&
-							  (m_mouse_y <= (scrollbar_y + scrollbar_size)) && (m_mouse_y <= (scrollbar_y + scrollbar_size)));
+							  (m_mouse_y <= (scrollbar_y + scrollbar_size)));
 }
 
 /*

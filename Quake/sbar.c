@@ -463,7 +463,7 @@ void Sbar_SortFrags (void)
 
 int Sbar_ColorForMap (int m)
 {
-	return m < 128 ? m + 8 : m + 8;
+	return m + 8;
 }
 
 /*

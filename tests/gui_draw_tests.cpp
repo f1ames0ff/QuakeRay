@@ -247,8 +247,9 @@ void TestMousePosCacheAndClearInputState(SDL_Window *window)
     Require(QR_GUI_Ready() != 0, "GUI bridge must initialize for mouse cache / clear input test");
 
     // M09: ProcessEvent must update QR_GUI_GetMousePos immediately before NewFrame runs.
-    SDL_Event ev = {};
-    ev.type = SDL_MOUSEMOTION;
+    SDL_Event ev;
+    ev.motion = {};
+    ev.motion.type = SDL_MOUSEMOTION;
     ev.motion.windowID = windowId;
     ev.motion.x = 123;
     ev.motion.y = 456;
@@ -257,8 +258,8 @@ void TestMousePosCacheAndClearInputState(SDL_Window *window)
     QR_GUI_GetMousePos(&mx, &my);
     Require(mx == 123.0f && my == 456.0f, "QR_GUI_GetMousePos must reflect latest SDL_MOUSEMOTION immediately");
 
-    ev = {};
-    ev.type = SDL_MOUSEBUTTONDOWN;
+    ev.button = {};
+    ev.button.type = SDL_MOUSEBUTTONDOWN;
     ev.button.windowID = windowId;
     ev.button.button = SDL_BUTTON_LEFT;
     ev.button.state = SDL_PRESSED;
@@ -268,8 +269,8 @@ void TestMousePosCacheAndClearInputState(SDL_Window *window)
     QR_GUI_GetMousePos(&mx, &my);
     Require(mx == 321.0f && my == 654.0f, "QR_GUI_GetMousePos must reflect latest SDL_MOUSEBUTTONDOWN immediately");
 
-    ev = {};
-    ev.type = SDL_MOUSEBUTTONUP;
+    ev.button = {};
+    ev.button.type = SDL_MOUSEBUTTONUP;
     ev.button.windowID = windowId;
     ev.button.button = SDL_BUTTON_LEFT;
     ev.button.state = SDL_RELEASED;
@@ -284,8 +285,8 @@ void TestMousePosCacheAndClearInputState(SDL_Window *window)
     QR_GUI_ClearInputState();
 
     // M11: Press Ctrl + LMB, pump one frame, then verify QR_GUI_ClearInputState clears them.
-    ev = {};
-    ev.type = SDL_KEYDOWN;
+    ev.key = {};
+    ev.key.type = SDL_KEYDOWN;
     ev.key.windowID = windowId;
     ev.key.state = SDL_PRESSED;
     ev.key.keysym.sym = SDLK_LCTRL;
@@ -293,8 +294,8 @@ void TestMousePosCacheAndClearInputState(SDL_Window *window)
     ev.key.keysym.mod = KMOD_LCTRL;
     Require(QR_GUI_ProcessEvent(&ev) == 1, "key down must be consumed");
 
-    ev = {};
-    ev.type = SDL_MOUSEBUTTONDOWN;
+    ev.button = {};
+    ev.button.type = SDL_MOUSEBUTTONDOWN;
     ev.button.windowID = windowId;
     ev.button.button = SDL_BUTTON_LEFT;
     ev.button.state = SDL_PRESSED;
@@ -425,14 +426,15 @@ void TestColorHexMixedAndVec3Input(SDL_Window *window)
     });
     Require(changed == 0 && enabledFlag == 0, "6-digit hex must not commit before Enter or blur");
 
-    SDL_Event clickOut = {};
-    clickOut.type = SDL_MOUSEMOTION;
+    SDL_Event clickOut;
+    clickOut.motion = {};
+    clickOut.motion.type = SDL_MOUSEMOTION;
     clickOut.motion.windowID = windowId;
     clickOut.motion.x = 2;
     clickOut.motion.y = 2;
     QR_GUI_ProcessEvent(&clickOut);
-    clickOut = {};
-    clickOut.type = SDL_MOUSEBUTTONDOWN;
+    clickOut.button = {};
+    clickOut.button.type = SDL_MOUSEBUTTONDOWN;
     clickOut.button.windowID = windowId;
     clickOut.button.button = SDL_BUTTON_LEFT;
     clickOut.button.state = SDL_PRESSED;
@@ -442,7 +444,7 @@ void TestColorHexMixedAndVec3Input(SDL_Window *window)
     runPanelFrame([&] {
         changed = QR_GUI_ColorHexMixed("hex_en", rgbEn, &enabledFlag, 1, "tip");
     });
-    clickOut.type = SDL_MOUSEBUTTONUP;
+    clickOut.button.type = SDL_MOUSEBUTTONUP;
     clickOut.button.state = SDL_RELEASED;
     QR_GUI_ProcessEvent(&clickOut);
     Require(changed == 1 && enabledFlag == 1, "valid 6-digit hex must commit on deactivation and set *enabled = 1");
@@ -685,16 +687,18 @@ void TestImagePickAndPolygonEdit(SDL_Window *window)
     allowUncheckedUploads = true;
 
     auto sendMove = [&](int x, int y) {
-        SDL_Event ev = {};
-        ev.type = SDL_MOUSEMOTION;
+        SDL_Event ev;
+        ev.motion = {};
+        ev.motion.type = SDL_MOUSEMOTION;
         ev.motion.windowID = windowId;
         ev.motion.x = x;
         ev.motion.y = y;
         QR_GUI_ProcessEvent(&ev);
     };
     auto sendButton = [&](bool down, int x, int y) {
-        SDL_Event ev = {};
-        ev.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+        SDL_Event ev;
+        ev.button = {};
+        ev.button.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
         ev.button.windowID = windowId;
         ev.button.button = SDL_BUTTON_LEFT;
         ev.button.state = down ? SDL_PRESSED : SDL_RELEASED;
@@ -703,8 +707,9 @@ void TestImagePickAndPolygonEdit(SDL_Window *window)
         QR_GUI_ProcessEvent(&ev);
     };
     auto sendModKey = [&](SDL_Keycode sym, SDL_Scancode scancode, Uint16 mod, bool down) {
-        SDL_Event ev = {};
-        ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+        SDL_Event ev;
+        ev.key = {};
+        ev.key.type = down ? SDL_KEYDOWN : SDL_KEYUP;
         ev.key.windowID = windowId;
         ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
         ev.key.keysym.sym = sym;
@@ -713,8 +718,9 @@ void TestImagePickAndPolygonEdit(SDL_Window *window)
         QR_GUI_ProcessEvent(&ev);
     };
     auto sendWheel = [&](int y) {
-        SDL_Event ev = {};
-        ev.type = SDL_MOUSEWHEEL;
+        SDL_Event ev;
+        ev.wheel = {};
+        ev.wheel.type = SDL_MOUSEWHEEL;
         ev.wheel.windowID = windowId;
         ev.wheel.y = y;
 #if SDL_VERSION_ATLEAST(2, 0, 18)
