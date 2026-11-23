@@ -11,7 +11,7 @@
 - Runtime jobs are disabled by default. Operator activation requires `QUAKERAY_ENABLE_JOBS=1` in the MCP server environment; research additionally requires `QUAKERAY_ENABLE_RESEARCH=1`. The project configuration explicitly sets both to `0`.
 - Runtime jobs use the machine guard and enforce the one-game-instance rule. After changing server code or its environment configuration, disconnect/connect `quakeray` through `/mcps` in OpenCode.
 - Keep the architecture index and performance evidence current when changing a listed execution boundary or profiler counter. Unknown costs are not measurements, and unverified hypotheses are not conclusions.
-- Run `python3 -B tools/check_quality.py --local` (and `python3 -B renderer/tools/check_quality.py --local` when changing `renderer`) plus the relevant test targets before opening a PR; see [docs/code-quality.md](docs/code-quality.md) for the CI quality gates, sanitizers, and SonarQube Cloud setup.
+- Run `./tools/check_local.sh` (or `./renderer/tools/check_local.sh` when changing `renderer`) plus the relevant test targets before opening a PR; see [docs/code-quality.md](docs/code-quality.md) for the CI and local quality gates, `ccache`, and sanitizers.
 
 ## Build policy
 
