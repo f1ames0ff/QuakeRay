@@ -139,6 +139,19 @@ atomic_uint32_t rt_end_task_running;
 	   shafts are, and what they cost. */ \
 	CVAR_DEF_T (rt_sky_godrays_quality, "2") \
 	CVAR_DEF_T (rt_sky_godrays_sky_threshold, "0.75") \
+	CVAR_DEF_T (rt_light_shafts, "1") \
+	CVAR_DEF_T (rt_light_shafts_intensity, "1") \
+	CVAR_DEF_T (rt_light_shafts_resolution, "1") \
+	CVAR_DEF_T (rt_light_shafts_density, "0.002") \
+	CVAR_DEF_T (rt_light_shafts_albedo, "1") \
+	CVAR_DEF_T (rt_light_shafts_local_fog, "1") \
+	CVAR_DEF_T (rt_light_shafts_emissive_r, "0") \
+	CVAR_DEF_T (rt_light_shafts_emissive_g, "0") \
+	CVAR_DEF_T (rt_light_shafts_emissive_b, "0") \
+	CVAR_DEF_T (rt_light_shafts_temporal, "1") \
+	CVAR_DEF_T (rt_light_shafts_sun, "0") \
+	CVAR_DEF_T (rt_light_shafts_debug, "0") \
+	CVAR_DEF_T (rt_light_shafts_rays, "1048576") \
 	CVAR_DEF_T (rt_denoiser, "1") \
 	CVAR_DEF_T (rt_no_textures, "0") \
 	/* No pass reads forceAntiFirefly: CmQ2Adapter's anti-firefly is not gated by
@@ -1354,6 +1367,23 @@ static void RT_Bench_WriteFrames (FILE *log, const char *demo)
 	         rt_bench_frame_sample_count, rt_bench_frames - rt_bench_frame_sample_count);
 }
 
+static void RT_Bench_ReportLightShaftSettings (FILE *f)
+{
+	RT_Bench_Setting (f, "rt_light_shafts");
+	RT_Bench_Setting (f, "rt_light_shafts_intensity");
+	RT_Bench_Setting (f, "rt_light_shafts_resolution");
+	RT_Bench_Setting (f, "rt_light_shafts_density");
+	RT_Bench_Setting (f, "rt_light_shafts_albedo");
+	RT_Bench_Setting (f, "rt_light_shafts_local_fog");
+	RT_Bench_Setting (f, "rt_light_shafts_emissive_r");
+	RT_Bench_Setting (f, "rt_light_shafts_emissive_g");
+	RT_Bench_Setting (f, "rt_light_shafts_emissive_b");
+	RT_Bench_Setting (f, "rt_light_shafts_temporal");
+	RT_Bench_Setting (f, "rt_light_shafts_sun");
+	RT_Bench_Setting (f, "rt_light_shafts_debug");
+	RT_Bench_Setting (f, "rt_light_shafts_rays");
+}
+
 qboolean RT_Bench_Report (const char *demo)
 {
 	RT_Prof_Lock ();
@@ -1583,6 +1613,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_sky_godrays_intensity");
 	RT_Bench_Setting (f, "rt_sky_godrays_quality");
 	RT_Bench_Setting (f, "rt_sky_godrays_sky_threshold");
+	RT_Bench_ReportLightShaftSettings (f);
 	RT_Bench_Setting (f, "rt_physical_sky");
 	RT_Bench_Setting (f, "rt_physical_sun");
 	RT_Bench_Setting (f, "rt_sky_sun_size");
@@ -3796,6 +3827,31 @@ static void VID_ApplyTextureFilterParams (QrDrawFrameTexturesParams *params)
 		&params->samplerAnisotropy);
 }
 
+static void GL_PopulateSkyLightShaftParams (QrDrawFrameSkyParams *sky, qboolean materials_only)
+{
+	sky->lightShaftsEnabled = !materials_only && CVAR_TO_BOOL (rt_light_shafts);
+	sky->lightShaftsIntensity = CVAR_TO_FLOAT (rt_light_shafts_intensity);
+	sky->lightShaftsResolution = CVAR_TO_UINT32 (rt_light_shafts_resolution);
+	sky->lightShaftsDensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_density), 1.0f);
+	sky->lightShaftsAlbedo = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_albedo), 1.0f);
+	sky->lightShaftsLocalFogScale = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_local_fog), 16.0f);
+	sky->lightShaftsEmissive.data[0] = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_emissive_r), 16.0f);
+	sky->lightShaftsEmissive.data[1] = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_emissive_g), 16.0f);
+	sky->lightShaftsEmissive.data[2] = CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_emissive_b), 16.0f);
+	sky->lightShaftsTemporal = CVAR_TO_BOOL (rt_light_shafts_temporal);
+	sky->lightShaftsSun = CVAR_TO_BOOL (rt_light_shafts_sun);
+	sky->lightShaftsDebug = CVAR_TO_UINT32 (rt_light_shafts_debug);
+	sky->lightShaftsRayBudget = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_light_shafts_rays), 1048576.0f);
+}
+
+static void GL_ApplyLightShaftVolumetricOverrides (QrDrawFrameVolumetricParams *vol, qboolean materials_only)
+{
+	vol->enable = !materials_only &&
+		(CVAR_TO_UINT32 (rt_volume_type) != 0 || CVAR_TO_BOOL (rt_light_shafts));
+	vol->useSimpleDepthBased = CVAR_TO_UINT32 (rt_volume_type) == 1 &&
+		!CVAR_TO_BOOL (rt_light_shafts);
+}
+
 /*
 =================
 GL_BuildEndRenderingSnapshot
@@ -3980,6 +4036,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.godRaysSkyDirection = {{0.0f, 0.0f, 0.0f}},
 		.godRaysSkyColor = {{0.0f, 0.0f, 0.0f}},
 	};
+	GL_PopulateSkyLightShaftParams (&sky_params, materials_only);
 
 	if (usePhysicalSky)
 	{
@@ -3996,16 +4053,14 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
 		c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
 	}
-	else if (!CVAR_TO_BOOL (r_fastsky) && !CVAR_TO_BOOL (rt_physical_sun))
+	else if (!CVAR_TO_BOOL (r_fastsky))
 	{
 		vec3_t brightest_dir, brightest_color;
 
-		// The shafts of a classic sky are not drawn any more: rt_sky_godrays is read
-		// only for the procedural sky, and with rt_physical_sky 0 nothing on this
-		// path reaches the frame. What is sent here is the aim a shaft *would* have
-		// over a sky that is a picture -- the brightest point of the texture,
-		// dressed as the sun -- kept for the record and for the day the shafts are
-		// wanted over one again; the lookup behind it is done at load time.
+		// A classic sky is a picture drawn from the skybox: the shafts follow the
+		// brightest spot of that picture above rt_sky_godrays_sky_threshold, dressed
+		// as the sun, whatever rt_physical_sun says about the level's sunlight. The
+		// lookup behind it is done at load time.
 		if (Sky_GetBrightestPoint (cl.time, brightest_dir, brightest_color))
 		{
 			RT_FIXUP_LIGHT_INTENSITY (brightest_color, true);
@@ -4042,8 +4097,6 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 	}
 
 	QrDrawFrameVolumetricParams volumetric_params = {
-		.enable = !materials_only && CVAR_TO_UINT32 (rt_volume_type) != 0,
-		.useSimpleDepthBased = CVAR_TO_UINT32 (rt_volume_type) == 1,
 		.volumetricFar = CVAR_TO_FLOAT (rt_volume_far),
 		.ambientColor = RT_VEC3 (volume_ambient_color),
 		.scaterring = materials_only ? 0.0f : CVAR_TO_FLOAT (rt_volume_scatter),
@@ -4051,6 +4104,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.sourceDirection = RT_AnglesToDir (volume_light_angles),
 		.sourceAssymetry = CVAR_TO_FLOAT (rt_volume_lassymetry),
 	};
+	GL_ApplyLightShaftVolumetricOverrides (&volumetric_params, materials_only);
 
 	QrDrawFrameTexturesParams texture_params = {
 		.dynamicSamplerFilter = CVAR_TO_INT32 (vid_filter) == 1 ? QR_SAMPLER_FILTER_NEAREST : QR_SAMPLER_FILTER_LINEAR,

@@ -414,6 +414,30 @@ static void RT_UploadSunLight (void)
 	}
 }
 
+static void RT_EnableDefaultSpotShafts (rt_emitter_light_t *light)
+{
+	light->light_shafts = true;
+	light->light_shafts_power = 1.0f;
+	light->light_shafts_distance = 0.0f;
+	light->light_shafts_falloff = 1.0f;
+}
+
+static void RT_FillCustomSphereShafts (QrSphericalLightUploadInfo *info, const rt_custom_light_t *l)
+{
+	info->lightShafts = l->light_shafts ? 1 : 0;
+	info->lightShaftsPower = q_max (0.0f, l->light_shafts_power);
+	info->lightShaftsDistance = q_max (0.0f, l->light_shafts_distance);
+	info->lightShaftsFalloff = q_max (0.01f, l->light_shafts_falloff);
+}
+
+static void RT_FillCustomSpotShafts (QrSpotLightUploadInfo *spot, const rt_custom_light_t *l)
+{
+	spot->lightShafts = l->light_shafts ? 1 : 0;
+	spot->lightShaftsPower = q_max (0.0f, l->light_shafts_power);
+	spot->lightShaftsDistance = q_max (0.0f, l->light_shafts_distance);
+	spot->lightShaftsFalloff = q_max (0.01f, l->light_shafts_falloff);
+}
+
 static void RT_UploadAllDlights ()
 {
 	if (CVAR_TO_BOOL (rt_materials_only))
@@ -468,6 +492,7 @@ static void RT_UploadAllDlights ()
 			VectorCopy (l->dir, light.direction);
 			light.angleInner = l->angleInner;
 			light.angleOuter = l->angleOuter;
+			RT_EnableDefaultSpotShafts (&light);
 		}
 
 		RT_LIGHT_Emit (&light);
@@ -514,6 +539,7 @@ static void RT_UploadAllDlights ()
 				.position = {position[0], position[1], position[2]},
 				.radius = METRIC_TO_QUAKEUNIT (l->radius),
 			};
+			RT_FillCustomSphereShafts (&info, l);
 
 			if (l->spot && (l->dir[0] != 0.0f || l->dir[1] != 0.0f || l->dir[2] != 0.0f))
 			{
@@ -534,6 +560,7 @@ static void RT_UploadAllDlights ()
 					.angleOuter = angleOuter,
 					.angleInner = angleInner,
 				};
+				RT_FillCustomSpotShafts (&spot, l);
 
 				QrResult r = qrUploadSpotLight (vulkan_globals.instance, &spot);
 				QR_CHECK (r);
