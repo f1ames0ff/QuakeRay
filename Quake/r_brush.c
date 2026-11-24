@@ -323,6 +323,8 @@ void DrawGLPoly (
 			.transform = *transform,
 		};
 
+		TexMgr_FillSubsurfaceUpload (tex, &info);
+
 		qrUploadLanePush (vulkan_globals.instance, is_sky ? QR_UPLOAD_LANE_SKY : QR_UPLOAD_LANE_BRUSH);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
 		qrUploadLanePop (vulkan_globals.instance);
@@ -350,9 +352,10 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 	float       dot;
 	mplane_t   *pplane;
 	qmodel_t   *clmodel;
-	vec3_t      modelorg;
+	vec3_t         modelorg = {0.0f, 0.0f, 0.0f};
+	const qboolean use_pvs = CVAR_TO_BOOL (rt_enable_pvs);
 
-	if (CVAR_TO_BOOL (rt_enable_pvs))
+	if (use_pvs)
 	{
 		if (R_CullModelForEntity (e))
 			return;
@@ -360,7 +363,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 
 	clmodel = e->model;
 
-	if (CVAR_TO_BOOL (rt_enable_pvs))
+	if (use_pvs)
 	{
 		VectorSubtract (r_refdef.vieworg, e->origin, modelorg);
 		if (e->angles[0] || e->angles[1] || e->angles[2])
@@ -383,7 +386,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int entuniquei
 	uint32_t brushpolys = 0;
 	for (i = 0; i < clmodel->nummodelsurfaces; i++, psurf++)
 	{
-		if (CVAR_TO_BOOL (rt_enable_pvs))
+		if (use_pvs)
 		{
 			pplane = psurf->plane;
 			dot = DotProduct (modelorg, pplane->normal) - pplane->dist;

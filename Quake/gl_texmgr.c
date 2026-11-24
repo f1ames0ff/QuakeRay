@@ -98,7 +98,7 @@ static QrMaterialCreateFlags TexMgr_GetRtFlags (gltexture_t *glt)
 {
 	QrMaterialCreateFlags fs = 0;
 
-	if (glt->flags & TEXPREF_MIPMAP)
+	if (!(glt->flags & TEXPREF_MIPMAP))
 	{
 		fs |= QR_MATERIAL_CREATE_DONT_GENERATE_MIPMAPS_BIT;
 	}
@@ -1449,6 +1449,7 @@ static byte *TexMgr_LoadMaterialTexture (const rt_material_t *mat, int which, in
 	case RT_MAT_TEX_EMISSIVE: path = mat->filename_emissive; break;
 	case RT_MAT_TEX_OVERLAY:  path = mat->filename_overlay; break;
 	case RT_MAT_TEX_GLOSS:    path = mat->filename_gloss; break;
+	case RT_MAT_TEX_SSS:      path = mat->filename_sss; break;
 	default:                  break;
 	}
 
@@ -1480,6 +1481,259 @@ static void TexMgr_ApplyLightShafts (gltexture_t *glt, const rt_material_t *mat)
 	glt->rtlightshaftsfalloff = mat->light_shafts_falloff;
 }
 
+static void TexMgr_ResetSubsurface (gltexture_t *glt)
+{
+	glt->rtsss = false;
+	glt->rtssscolor[0] = 1.0f;
+	glt->rtssscolor[1] = 0.35f;
+	glt->rtssscolor[2] = 0.2f;
+	glt->rtsssradius = 0.02f;
+	glt->rtsssstrength = 0.0f;
+}
+
+static void TexMgr_ApplySubsurface (gltexture_t *glt, const rt_material_t *mat)
+{
+	const qboolean allowed = !mat->material_glass && !mat->material_water && !mat->mirror;
+
+	VectorCopy (mat->sss_color, glt->rtssscolor);
+	glt->rtsssradius = mat->sss_radius;
+	glt->rtsssstrength = mat->sss_strength;
+	glt->rtsss = allowed && mat->sss_strength > 0.0f && mat->sss_radius > 0.0f;
+}
+
+void TexMgr_FillSubsurfaceUpload (const gltexture_t *tx, QrGeometryUploadInfo *info)
+{
+	if (!tx || !tx->rtsss || !info)
+		return;
+	if (info->visibilityType == QR_GEOMETRY_VISIBILITY_TYPE_SKY)
+		return;
+	if (info->passThroughType != QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE &&
+	    info->passThroughType != QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED)
+		return;
+	info->flags |= QR_GEOMETRY_UPLOAD_SUBSURFACE_BIT;
+	info->subsurfaceColor.data[0] = tx->rtssscolor[0];
+	info->subsurfaceColor.data[1] = tx->rtssscolor[1];
+	info->subsurfaceColor.data[2] = tx->rtssscolor[2];
+	info->subsurfaceRadius = tx->rtsssradius;
+	info->subsurfaceStrength = tx->rtsssstrength;
+}
+
+typedef struct
+{
+	const byte *src;
+	int         tw;
+	int         th;
+} texmgr_mask_src_t;
+
+typedef struct
+{
+	const float *color;
+	float        threshold;
+	float        feather;
+	float        factor;
+	int          poly_count;
+	const float (*poly_uv)[2];
+} texmgr_mask_spec_t;
+
+static qboolean TexMgr_PointInPolyUv (float u, float v, int poly_count, const float (*poly_uv)[2])
+{
+	qboolean inside = false;
+	int      p, q;
+
+	for (p = 0, q = poly_count - 1; p < poly_count; q = p++)
+	{
+		const float pu = poly_uv[p][0], pv = poly_uv[p][1];
+		const float qu = poly_uv[q][0], qv = poly_uv[q][1];
+
+		if (((pv > v) != (qv > v)) && (u < (qu - pu) * (v - pv) / (qv - pv) + pu))
+			inside = !inside;
+	}
+	return inside;
+}
+
+static void TexMgr_EvalBlockMask (const texmgr_mask_src_t *srcInfo, const texmgr_mask_spec_t *spec,
+                                  float *mask, float *rawmask, float *dist)
+{
+	const int   npix = srcInfo->tw * srcInfo->th;
+	const float thr = spec->threshold;
+	const int   feather = (spec->feather >= 1.0f) ? (int)(spec->feather + 0.5f) : 0;
+
+	for (int i = 0; i < npix; i++)
+	{
+		const byte *src = srcInfo->src + i * 4;
+		const float dr = src[0] / 255.0f - spec->color[0];
+		const float dg = src[1] / 255.0f - spec->color[1];
+		const float db = src[2] / 255.0f - spec->color[2];
+		const float d2 = dr * dr + dg * dg + db * db;
+
+		mask[i] = 0.0f;
+		if (rawmask) rawmask[i] = 0.0f;
+		if (dist) dist[i] = d2;
+
+		if (spec->poly_count >= 3)
+		{
+			const int   px = i % srcInfo->tw;
+			const int   py = i / srcInfo->tw;
+			const float u = ((float)px + 0.5f) / (float)srcInfo->tw;
+			const float v = ((float)py + 0.5f) / (float)srcInfo->th;
+
+			if (TexMgr_PointInPolyUv (u, v, spec->poly_count, spec->poly_uv))
+			{
+				mask[i] = spec->factor;
+				if (rawmask) rawmask[i] = 1.0f;
+				if (dist) dist[i] = 0.0f;
+			}
+		}
+		else if (d2 <= 3.0f * thr * thr)
+		{
+			const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
+			const float k = RT_COLOR_EMISSIVE_FALLOFF;
+			const float tail = expf (-k);
+			const float v = (expf (-k * dnorm) - tail) / (1.0f - tail);
+
+			mask[i] = v * spec->factor;
+			if (rawmask) rawmask[i] = v;
+		}
+	}
+
+	if (feather > 0)
+		TexMgr_FeatherEmissive (mask, srcInfo->tw, srcInfo->th, feather);
+}
+
+typedef struct
+{
+	float *colorEmis;
+	byte  *colorBlend;
+	float *colorDist;
+	float *colorRaw;
+} texmgr_emis_bufs_t;
+
+static void TexMgr_BuildColorEmissiveBuffers (const rt_material_t *mat, const byte *baseSrc,
+                                              int tw, int th, int emisBlendCode,
+                                              texmgr_emis_bufs_t *out)
+{
+	const int               npix = tw * th;
+	const texmgr_mask_src_t maskSrc = {baseSrc, tw, th};
+	float                  *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	float                  *rawmask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	float                  *dist = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+
+	out->colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	out->colorBlend = (byte *)Mem_Alloc ((size_t)npix);
+	out->colorDist  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	out->colorRaw   = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	for (int i = 0; i < npix; i++)
+	{
+		out->colorEmis[i] = 0.0f;
+		out->colorDist[i] = 0.0f;
+		out->colorRaw[i] = 0.0f;
+		out->colorBlend[i] = (byte)emisBlendCode;
+	}
+
+	for (int c = 0; c < mat->color_emissive_count; c++)
+	{
+		const rt_emissive_t     *block = &mat->color_emissive[c];
+		const byte               blockCode = (byte)((block->blend >= 0) ? (block->blend + 1) : 0);
+		const texmgr_mask_spec_t spec = {block->color, block->threshold, block->feather,
+		                                 block->factor, block->poly_count, block->poly_uv};
+
+		TexMgr_EvalBlockMask (&maskSrc, &spec, mask, rawmask, dist);
+
+		for (int i = 0; i < npix; i++)
+		{
+			if (!(mask[i] > 0.0f))
+				continue;
+			if (out->colorEmis[i] > 0.0f && !(dist[i] < out->colorDist[i]))
+				continue;
+
+			out->colorEmis[i] = mask[i];
+			out->colorRaw[i] = rawmask[i];
+			out->colorBlend[i] = blockCode;
+			out->colorDist[i] = dist[i];
+		}
+	}
+
+	Mem_Free (mask);
+	Mem_Free (rawmask);
+	Mem_Free (dist);
+}
+
+static void TexMgr_SampleSssTextureLuma (const rt_material_t *mat, int tw, int th, float *combined)
+{
+	int   sw = 0, sh = 0;
+	byte *sssRaw = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_SSS, &sw, &sh);
+	const int npix = tw * th;
+
+	if (!sssRaw)
+	{
+		Con_Printf ("RT: material '%s': texture_sss '%s' could not be loaded\n",
+		            mat->name, mat->filename_sss);
+		return;
+	}
+
+	byte *sssBuf = (byte *)Mem_Alloc ((size_t)npix * 4);
+	TexMgr_ResizeRgba (sssRaw, sw, sh, sssBuf, tw, th);
+	Mem_Free (sssRaw);
+
+	for (int i = 0; i < npix; i++)
+	{
+		combined[i] = (0.2126f * sssBuf[i * 4 + 0] +
+		               0.7152f * sssBuf[i * 4 + 1] +
+		               0.0722f * sssBuf[i * 4 + 2]) / 255.0f;
+	}
+	Mem_Free (sssBuf);
+}
+
+static byte *TexMgr_BuildSssMaskBytes (const rt_material_t *mat, const byte *baseSrc,
+                                       int tw, int th, qboolean rtsss)
+{
+	const qboolean hasTex = mat->filename_sss[0] != '\0';
+	const qboolean hasBlocks = mat->has_sss_blocks && mat->sss_block_count > 0;
+	const int      npix = tw * th;
+	float         *combined;
+	byte          *out;
+
+	if (!rtsss || (!hasTex && !hasBlocks))
+		return NULL;
+
+	combined = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+	for (int i = 0; i < npix; i++)
+		combined[i] = 0.0f;
+
+	if (hasTex)
+		TexMgr_SampleSssTextureLuma (mat, tw, th, combined);
+
+	if (hasBlocks)
+	{
+		const texmgr_mask_src_t maskSrc = {baseSrc, tw, th};
+		float                  *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
+
+		for (int c = 0; c < mat->sss_block_count; c++)
+		{
+			const rt_sss_block_t    *block = &mat->sss_blocks[c];
+			const texmgr_mask_spec_t spec = {block->color, block->threshold, block->feather,
+			                                 block->factor, block->poly_count, block->poly_uv};
+
+			TexMgr_EvalBlockMask (&maskSrc, &spec, mask, NULL, NULL);
+			for (int i = 0; i < npix; i++)
+			{
+				if (mask[i] > combined[i])
+					combined[i] = mask[i];
+			}
+		}
+		Mem_Free (mask);
+	}
+
+	out = (byte *)Mem_Alloc ((size_t)npix);
+	for (int i = 0; i < npix; i++)
+	{
+		const int v = (int)(combined[i] * 255.0f + 0.5f);
+		out[i] = (byte)CLAMP (0, v, 255);
+	}
+	Mem_Free (combined);
+	return out;
+}
+
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1505,6 +1759,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtglasscolor[2] = 1.0f;
 		glt->rtwater = false;
 		TexMgr_ResetLightShafts (glt);
+		TexMgr_ResetSubsurface (glt);
 		glt->rtuvscale[0] = glt->rtuvscale[1] = 1.0f;
 		glt->rtuvoffset[0] = glt->rtuvoffset[1] = 0.0f;
 		glt->rtemissive = false;
@@ -1544,6 +1799,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	TexMgr_EmissiveCone (mat, &glt->rtemisangleinner, &glt->rtemisangleouter);
 	glt->rtemisprojector = mat->emissive_projector;
 	TexMgr_ApplyLightShafts (glt, mat);
+	TexMgr_ApplySubsurface (glt, mat);
 	glt->rtmirror = mat->mirror;
 	glt->rtexactnormals = mat->exact_normals;
 	glt->rtforcerasterize = mat->force_rasterize;
@@ -1659,7 +1915,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	   uses; the glass branch multiplies the refracted light by it. */
 	float glassT = mat->material_glass ? mat->transparency : 1.0f;
 
-	if (glassT != glassT)
+	if (isnan (glassT))
 		glassT = 1.0f;
 	if (glassT < 0.0f)
 		glassT = 0.0f;
@@ -1730,92 +1986,18 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	float *colorRaw   = NULL;
 	if (use_color_emissive && !emisBuf)
 	{
-		colorEmis  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-		colorBlend = (byte *)Mem_Alloc ((size_t)npix);
-		colorDist  = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-		colorRaw   = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-		memset (colorEmis, 0, (size_t)npix * sizeof (float));
-		memset (colorDist, 0, (size_t)npix * sizeof (float));
-		memset (colorRaw, 0, (size_t)npix * sizeof (float));
-		memset (colorBlend, (byte)emisBlendCode, (size_t)npix);
+		texmgr_emis_bufs_t bufs = {0};
+		const byte *baseSrc = baseBuf ? baseBuf : (const byte *)albedoFallback;
 
-		for (int c = 0; c < mat->color_emissive_count; c++)
-		{
-			const rt_emissive_t *block = &mat->color_emissive[c];
-			const float          thr = block->threshold;
-			const int            feather = (block->feather >= 1.0f) ? (int)(block->feather + 0.5f) : 0;
-			const byte           blockCode = (byte)((block->blend >= 0) ? (block->blend + 1) : 0);
-			float               *mask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-			float               *rawmask = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-			float               *dist = (float *)Mem_Alloc ((size_t)npix * sizeof (float));
-
-			for (int i = 0; i < npix; i++)
-			{
-				const byte *src = baseBuf ? baseBuf + i * 4 : (byte *)albedoFallback + i * 4;
-				const float dr = src[0] / 255.0f - block->color[0];
-				const float dg = src[1] / 255.0f - block->color[1];
-				const float db = src[2] / 255.0f - block->color[2];
-				const float d2 = dr * dr + dg * dg + db * db;
-
-				mask[i] = 0.0f;
-				rawmask[i] = 0.0f;
-				dist[i] = d2;
-				if (block->poly_count >= 3)
-				{
-					const float u = ((float)(i % tw) + 0.5f) / (float)tw;
-					const float v = ((float)(i / tw) + 0.5f) / (float)th;
-					qboolean    inside = false;
-					int         p, q;
-
-					for (p = 0, q = block->poly_count - 1; p < block->poly_count; q = p++)
-					{
-						const float pu = block->poly_uv[p][0], pv = block->poly_uv[p][1];
-						const float qu = block->poly_uv[q][0], qv = block->poly_uv[q][1];
-
-						if (((pv > v) != (qv > v)) && (u < (qu - pu) * (v - pv) / (qv - pv) + pu))
-							inside = !inside;
-					}
-
-					if (inside)
-					{
-						mask[i] = block->factor;
-						rawmask[i] = 1.0f;
-						dist[i] = 0.0f;
-					}
-				}
-				else if (d2 <= 3.0f * thr * thr)
-				{
-					const float dnorm = (thr > 0.0f) ? sqrtf (d2 / 3.0f) / thr : 0.0f;
-					const float k = RT_COLOR_EMISSIVE_FALLOFF;
-					const float tail = expf (-k);
-					const float v = (expf (-k * dnorm) - tail) / (1.0f - tail);
-
-					mask[i] = v * block->factor;
-					rawmask[i] = v;
-				}
-			}
-
-			if (feather > 0)
-				TexMgr_FeatherEmissive (mask, tw, th, feather);
-
-			for (int i = 0; i < npix; i++)
-			{
-				if (!(mask[i] > 0.0f))
-					continue;
-				if (colorEmis[i] > 0.0f && !(dist[i] < colorDist[i]))
-					continue;
-
-				colorEmis[i] = mask[i];
-				colorRaw[i] = rawmask[i];
-				colorBlend[i] = blockCode;
-				colorDist[i] = dist[i];
-			}
-
-			Mem_Free (mask);
-			Mem_Free (rawmask);
-			Mem_Free (dist);
-		}
+		TexMgr_BuildColorEmissiveBuffers (mat, baseSrc, tw, th, emisBlendCode, &bufs);
+		colorEmis = bufs.colorEmis;
+		colorBlend = bufs.colorBlend;
+		colorDist = bufs.colorDist;
+		colorRaw = bufs.colorRaw;
 	}
+
+	byte *sssMask = TexMgr_BuildSssMaskBytes (mat, baseBuf ? baseBuf : (const byte *)albedoFallback,
+	                                          tw, th, glt->rtsss);
 
 	for (int i = 0; i < npix; i++)
 	{
@@ -1972,7 +2154,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			normal[i * 4 + 1] = 128;
 			normal[i * 4 + 2] = 255;
 		}
-		normal[i * 4 + 3] = glassAlpha;
+		normal[i * 4 + 3] = sssMask ? sssMask[i] : (glt->rtsss ? 255 : glassAlpha);
 	}
 
 	if (overlayBuf && mat->material_glass)
@@ -2002,6 +2184,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (emisBuf) Mem_Free (emisBuf);
 	if (glossBuf) Mem_Free (glossBuf);
 	if (overlayBuf) Mem_Free (overlayBuf);
+	if (sssMask) Mem_Free (sssMask);
 
 	if (emissR > 0.0f || emissG > 0.0f || emissB > 0.0f)
 	{
@@ -2394,6 +2577,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtemisangleouter = 0.0f;
 	glt->rtemisprojector = false;
 	TexMgr_ResetLightShafts (glt);
+	TexMgr_ResetSubsurface (glt);
 	glt->rtemisuvmin[0] = glt->rtemisuvmin[1] = 0.0f;
 	glt->rtemisuvmax[0] = glt->rtemisuvmax[1] = 1.0f;
 	glt->rtemissiveglow = 0.0f;

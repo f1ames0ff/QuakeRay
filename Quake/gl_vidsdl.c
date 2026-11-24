@@ -38,6 +38,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "observer.h"
 #include "../shared/rt_frame_policy.h"
 #include "../shared/rt_prof_window.h"
+#include "../shared/vid_texfilter.h"
 #include "SDL.h"
 #include "SDL_syswm.h"
 #include <time.h> // for the timestamp of the frame rt_stats_dump appends
@@ -108,6 +109,8 @@ static cvar_t                   vid_desktopfullscreen = {"vid_desktopfullscreen"
 static cvar_t                   vid_borderless = {"vid_borderless", "0", CVAR_ARCHIVE};               // QuakeSpasm
 static cvar_t                   vid_palettize = {"vid_palettize", "0", CVAR_ARCHIVE};
 cvar_t                          vid_filter = {"vid_filter", "1", CVAR_ARCHIVE};
+cvar_t                          vid_anisotropic = {"vid_anisotropic", "16", CVAR_ARCHIVE};
+cvar_t                          vid_trilinear = {"vid_trilinear", "1", CVAR_ARCHIVE};
 cvar_t                          vid_gamma = {"gamma", "1", CVAR_ARCHIVE};       // johnfitz -- moved here from view.c
 cvar_t                          vid_contrast = {"contrast", "1", CVAR_ARCHIVE}; // QuakeSpasm, MarkV
 
@@ -3815,6 +3818,15 @@ static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrEx
 	dst->pPixelizedRenderSize = NULL;
 }
 
+static void VID_ApplyTextureFilterParams (QrDrawFrameTexturesParams *params)
+{
+	VID_TexFilter_ToSamplerParams (
+		CVAR_TO_INT32 (vid_trilinear),
+		CVAR_TO_INT32 (vid_anisotropic),
+		&params->samplerMipmapMode,
+		&params->samplerAnisotropy);
+}
+
 static void GL_PopulateSkyLightShaftParams (QrDrawFrameSkyParams *sky, qboolean materials_only)
 {
 	sky->lightShaftsEnabled = !materials_only && CVAR_TO_BOOL (rt_light_shafts);
@@ -4108,6 +4120,8 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 
 	for (int i = 0; i < MAX_LIGHTSTYLES; i++)
 		texture_params.lightStyleScales[i] = (float)d_lightstylevalue[i] * (1.0f / 256.0f);
+
+	VID_ApplyTextureFilterParams (&texture_params);
 
 	// Classic level fog: the worldspawn "fog" key and the `fog` console
 	// command, which Arcane Dimensions also uses to drive its dynamic fog. The
@@ -4785,6 +4799,8 @@ void VID_Init (void)
 	Cvar_SetCallback (&vid_vsync, VID_Vsync_f);
 	Cvar_RegisterVariable (&vid_maxframelatency);
 	Cvar_RegisterVariable (&vid_filter);
+	Cvar_RegisterVariable (&vid_anisotropic);
+	Cvar_RegisterVariable (&vid_trilinear);
 	Cvar_RegisterVariable (&vid_desktopfullscreen); // QuakeSpasm
 	Cvar_RegisterVariable (&vid_borderless);        // QuakeSpasm
 	Cvar_RegisterVariable (&vid_palettize);
@@ -5201,6 +5217,7 @@ enum
 
 	VID_OPT_DENOISER,
 	VID_OPT_TEXTURES,
+	VID_OPT_TEXTURE_FILTER,
 
 	VIDEO_OPTIONS_ITEMS
 };
@@ -5308,22 +5325,23 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir)
 {
-	if (vid_menu_nummodes)
+	if (vid_menu_nummodes > 0)
 	{
-		int i;
-		for (i = 0; i < vid_menu_nummodes; i++)
+		const int num_modes = CLAMP (1, vid_menu_nummodes, MAX_MODE_LIST);
+		int       i;
+		for (i = 0; i < num_modes; i++)
 		{
 			if (vid_menu_modes[i].width == vid_width.value && vid_menu_modes[i].height == vid_height.value)
 				break;
 		}
 
-		if (i == vid_menu_nummodes) // can't find it in list, so it must be a custom windowed res
+		if (i == num_modes) // can't find it in list, so it must be a custom windowed res
 		{
 			i = 0;
 		}
 		else
 		{
-			i = CLAMP (0, i + dir, vid_menu_nummodes - 1);
+			i = CLAMP (0, i + dir, num_modes - 1);
 		}
 
 		Cvar_SetValueQuick (&vid_width, (float)vid_menu_modes[i].width);
@@ -5501,6 +5519,70 @@ static void VID_Menu_StepFloatCvar (cvar_t *var, float step, float minval, float
 	Cvar_SetValueQuick (var, v);
 }
 
+static void VID_Menu_ChooseNextTextureFilter (int dir)
+{
+	const vid_texfilter_preset_t current = VID_TexFilter_PresetFromCvars (
+		CVAR_TO_INT32 (vid_trilinear),
+		CVAR_TO_INT32 (vid_anisotropic));
+	const vid_texfilter_preset_t next = VID_TexFilter_StepPreset ((int)current, dir);
+	int trilinear = 1;
+	int anisotropic = 16;
+
+	VID_TexFilter_PresetToCvars (next, &trilinear, &anisotropic);
+	Cvar_SetValueQuick (&vid_trilinear, (float)trilinear);
+	Cvar_SetValueQuick (&vid_anisotropic, (float)anisotropic);
+}
+
+static const char *VID_Menu_GetTextureFilterName (void)
+{
+	return VID_TexFilter_PresetName (
+		VID_TexFilter_PresetFromCvars (
+			CVAR_TO_INT32 (vid_trilinear),
+			CVAR_TO_INT32 (vid_anisotropic)));
+}
+
+static void VID_Menu_ApplyUpscaler (int vidopt, int dir)
+{
+	VID_Menu_ChooseNextAA (vidopt, dir);
+
+	int q = menu_settings.upscaler_quality;
+	if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
+		q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
+	Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
+	Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
+}
+
+static void VID_Menu_DrawUpscaler (cb_context_t *cbx, int y)
+{
+	const char *name = "Off";
+
+	M_Print (cbx, 16, y, "          Upscaler");
+	switch (menu_settings.upscaler_type)
+	{
+	case UPSCALER_FSR31: name = "AMD FSR 3.1"; break;
+	case UPSCALER_DLSS:  name = "Nvidia DLSS"; break;
+	default:             break;
+	}
+	M_Print (cbx, 184, y, name);
+}
+
+static void VID_Menu_DrawUpscalerQuality (cb_context_t *cbx, int y)
+{
+	QrRenderUpscaleTechnique tech;
+	int q = menu_settings.upscaler_quality;
+
+	M_Print (cbx, 16, y, "            Preset");
+	switch (menu_settings.upscaler_type)
+	{
+	case UPSCALER_FSR31: tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; break;
+	case UPSCALER_DLSS:  tech = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; break;
+	default:             tech = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST; q = 0; break;
+	}
+	if (q < 1 && menu_settings.upscaler_type != UPSCALER_OFF)
+		q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
+	M_Print (cbx, 184, y, GetUpscalerOptionName (q, tech));
+}
+
 static void VID_Menu_Adjust (int dir)
 {
 	switch (video_options_cursor)
@@ -5523,14 +5605,7 @@ static void VID_Menu_Adjust (int dir)
 		break;
 	case VID_OPT_UPSCALER:
 	case VID_OPT_UPSCALER_QUALITY:
-		VID_Menu_ChooseNextAA (video_options_cursor, dir);
-		{
-			int q = menu_settings.upscaler_quality;
-			if (menu_settings.upscaler_type != UPSCALER_OFF && q < 1)
-				q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-			Cvar_SetValueQuick (&rt_upscale_fsr31, (menu_settings.upscaler_type == UPSCALER_FSR31) ? q : 0);
-			Cvar_SetValueQuick (&rt_upscale_dlss, (menu_settings.upscaler_type == UPSCALER_DLSS) ? q : 0);
-		}
+		VID_Menu_ApplyUpscaler (video_options_cursor, dir);
 		break;
 	case VID_OPT_MATERIALS_ONLY:
 		Cvar_SetValueQuick (&rt_materials_only, !CVAR_TO_BOOL (rt_materials_only));
@@ -5546,6 +5621,9 @@ static void VID_Menu_Adjust (int dir)
 		break;
 	case VID_OPT_TEXTURES:
 		Cvar_SetValueQuick (&rt_no_textures, !CVAR_TO_BOOL (rt_no_textures));
+		break;
+	case VID_OPT_TEXTURE_FILTER:
+		VID_Menu_ChooseNextTextureFilter (dir);
 		break;
 	}
 }
@@ -5683,33 +5761,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 
 		case VID_OPT_UPSCALER:
 			y += 8; // separate
-
-			M_Print (cbx, 16, y, "          Upscaler");
-			{
-				const char *name = "Off";
-				switch (menu_settings.upscaler_type)
-				{
-				case UPSCALER_FSR31: name = "AMD FSR 3.1"; break;
-				case UPSCALER_DLSS:  name = "Nvidia DLSS"; break;
-				}
-				M_Print (cbx, 184, y, name);
-			}
+			VID_Menu_DrawUpscaler (cbx, y);
 			break;
 		case VID_OPT_UPSCALER_QUALITY:
-			M_Print (cbx, 16, y, "            Preset");
-			{
-				QrRenderUpscaleTechnique tech;
-				int q = menu_settings.upscaler_quality;
-				switch (menu_settings.upscaler_type)
-				{
-				case UPSCALER_FSR31: tech = QR_RENDER_UPSCALE_TECHNIQUE_AMD_FSR3; break;
-				case UPSCALER_DLSS:  tech = QR_RENDER_UPSCALE_TECHNIQUE_NVIDIA_DLSS; break;
-				default:             tech = QR_RENDER_UPSCALE_TECHNIQUE_NEAREST; q = 0; break;
-				}
-				if (q < 1 && menu_settings.upscaler_type != UPSCALER_OFF)
-					q = GetUpscalerDefaultQuality (menu_settings.upscaler_type);
-				M_Print (cbx, 184, y, GetUpscalerOptionName (q, tech));
-			}
+			VID_Menu_DrawUpscalerQuality (cbx, y);
 			break;
 
 
@@ -5749,6 +5804,10 @@ static void VID_MenuDraw (cb_context_t *cbx)
 		case VID_OPT_TEXTURES:
 			M_Print (cbx, 16, y, "          Textures");
 			M_DrawCheckbox (cbx, 184, y, !CVAR_TO_BOOL (rt_no_textures));
+			break;
+		case VID_OPT_TEXTURE_FILTER:
+			M_Print (cbx, 16, y, " Texture filtering");
+			M_Print (cbx, 184, y, VID_Menu_GetTextureFilterName ());
 			break;
 		}
 

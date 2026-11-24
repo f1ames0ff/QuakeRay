@@ -665,7 +665,7 @@ M_InScrollbar
 static qboolean M_InScrollbar ()
 {
 	return scrollbar_grab || (scrollbar_size && (m_mouse_x >= scrollbar_x) && (m_mouse_x <= (scrollbar_x + 8)) && (m_mouse_y >= scrollbar_y) &&
-							  (m_mouse_y <= (scrollbar_y + scrollbar_size)) && (m_mouse_y <= (scrollbar_y + scrollbar_size)));
+							  (m_mouse_y <= (scrollbar_y + scrollbar_size)));
 }
 
 /*
@@ -2509,7 +2509,7 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Texture filtering");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "World textures");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (Cvar_VariableValue ("vid_filter") == 0.0) ? "smooth" : "classic");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, "Models");

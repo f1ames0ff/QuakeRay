@@ -149,6 +149,7 @@ enum
 	PARAM_EMISSIVE, // texture_emissive
 	PARAM_OVERLAY,  // texture_overlay
 	PARAM_GLOSS,    // texture_gloss
+	PARAM_SSS_TEX,  // texture_sss
 	PARAM_TSCALE_U, // texture_scale_u
 	PARAM_TSCALE_V, // texture_scale_v
 	PARAM_TOFFS_U,  // texture_offset_u
@@ -164,6 +165,10 @@ enum
 	PARAM_GLASS_IOR,
 	PARAM_GLASS_THICKNESS,
 	PARAM_GLASS_COLOR,
+	PARAM_SSS_STRENGTH,
+	PARAM_SSS_RADIUS,
+	PARAM_SSS_COLOR,
+	PARAM_CSSS,
 	PARAM_EXACTN,
 	PARAM_FRAST,
 	PARAM_ISLIGHT,
@@ -201,6 +206,8 @@ static const struct qre_param_s
 	                     "RGBA paint: alpha sets coverage and RGB sets colour. On traced glass a separate matte layer uses the sun, up to 16 cluster lights with visibility tests and environment ambient, then blends continuously over the glass. It does not use the lighting of the background seen through the pane. No random coverage switching; base cutouts remain unchanged. rt_no_textures 1 shows unlit overlay coverage for diagnosis." },
 	[PARAM_GLOSS]    = { NULL, "texture_gloss",    QRE_T_TEXT,  0, 0, 0,
 	                     "White means mirror-smooth, black means rough (roughness = 1 - gloss). Ignored while roughness_override is set." },
+	[PARAM_SSS_TEX]  = { NULL, "texture_sss",      QRE_T_TEXT,  0, 0, 0,
+	                     "Greyscale/luminance subsurface scattering mask texture (combined with sss blocks)." },
 	[PARAM_TSCALE_U] = { NULL, "texture_scale_u",  QRE_T_FLOAT, 0.05f, 16, 0.01f,
 	                     "Horizontal texture repeat: 1 keeps the map's own mapping, 2 repeats every texture_* map twice across it. Applies to every texture_* key at once." },
 	[PARAM_TSCALE_V] = { NULL, "texture_scale_v",  QRE_T_FLOAT, 0.05f, 16, 0.01f,
@@ -231,6 +238,14 @@ static const struct qre_param_s
 	                     "How thick the pane is, in world units: the view through it is shifted by where the ray leaves the far face, and the light through it lands shifted the same way. The shift shows at a slant; straight through the pane and against the sky it is zero. 0 is an infinitely thin pane that only tints and reflects. Needs material_glass." },
 	[PARAM_GLASS_COLOR] = { NULL, "glass_color", QRE_T_COLOR, 0, 0, 0,
 	                     "The colour of the glass, multiplied into the transmitted view and the light that crosses the pane. White leaves what passes uncoloured. Needs material_glass." },
+	[PARAM_SSS_STRENGTH] = { "Subsurface", "sss_strength", QRE_T_FLOAT, 0, 1, 0.01f,
+	                     "Global subsurface scattering diffusion and back-lit translucency strength (0..1)." },
+	[PARAM_SSS_RADIUS] = { NULL, "sss_radius", QRE_T_FLOAT, 0, 1, 0.001f,
+	                     "Mean free path scatter radius in meters (0..1). Disabled for glass, water and mirrors." },
+	[PARAM_SSS_COLOR] = { NULL, "sss_color", QRE_T_COLOR, 0, 0, 0,
+	                     "Subsurface scatter tint (RGB) for Burley diffusion and transmitted back-lighting." },
+	[PARAM_CSSS]     = { NULL, "sss",        QRE_T_BOOL,  0, 0, 0,
+	                     "Select subsurface areas by eyedropper colour or UV polygon (up to ten blocks)." },
 	[PARAM_EXACTN]   = { "Model", "exact_normals",    QRE_T_BOOL,  0, 0, 0,
 	                     "Use the model's own vertex normals instead of generated ones (models only)." },
 	[PARAM_FRAST]    = { NULL, "force_rasterize",  QRE_T_BOOL,  0, 0, 0,
@@ -411,6 +426,9 @@ static struct
 	int luma_sel[QRE_GROUP_MAX];
 	rt_emissive_t luma_clip;
 	qboolean      luma_clip_valid;
+	int           sss_sel[QRE_GROUP_MAX];
+	rt_sss_block_t sss_clip;
+	qboolean      sss_clip_valid;
 
 	// the Global tab's "Global settings": on, the sky, sun and cloud settings
 	// belong to the config (all levels); off, they are saved for this level
@@ -546,6 +564,7 @@ typedef struct
 	qboolean       tmp_appended;
 	int            frame_tex;
 	int            luma_sel[QRE_GROUP_MAX];
+	int            sss_sel[QRE_GROUP_MAX];
 	qmodel_t      *entity_sel_model;
 	qmodel_t      *entity_preview_model;
 	qre_anim_t     entity_anims[QRE_ANIM_MAX];
@@ -568,6 +587,8 @@ static void QRE_InstanceSave (qre_instance_t *dst)
 	q_strlcpy (dst->pick_name, qre.pick_name, sizeof (dst->pick_name));
 	dst->frame_tex = qre.frame_tex;
 	memcpy (dst->luma_sel, qre.luma_sel, sizeof (dst->luma_sel));
+	for (i = 0; i < QRE_GROUP_MAX; i++)
+		dst->sss_sel[i] = qre.sss_sel[i];
 	dst->entity_sel_model = qre.entity_sel_model;
 	dst->entity_preview_model = qre.entity_preview_model;
 	memcpy (dst->entity_anims, qre.entity_anims, sizeof (dst->entity_anims));
@@ -618,6 +639,8 @@ static void QRE_InstanceLoad (const qre_instance_t *src)
 	q_strlcpy (qre.pick_name, src->pick_name, sizeof (qre.pick_name));
 	qre.frame_tex = src->frame_tex;
 	memcpy (qre.luma_sel, src->luma_sel, sizeof (qre.luma_sel));
+	for (i = 0; i < QRE_GROUP_MAX; i++)
+		qre.sss_sel[i] = src->sss_sel[i];
 	qre.entity_sel_model = src->entity_sel_model;
 	qre.entity_preview_model = src->entity_preview_model;
 	memcpy (qre.entity_anims, src->entity_anims, sizeof (qre.entity_anims));
@@ -789,6 +812,7 @@ static void QRE_InitDefault (rt_material_t *m, const char *name)
 	m->light_brightness = 1.0f;
 	m->light_styles = false;
 	m->color_emissive_threshold = 0.02f;
+	RT_MAT_InitSubsurfaceDefaults (m);
 	q_strlcpy (m->name, name, sizeof (m->name));
 }
 
@@ -1263,11 +1287,17 @@ static void QRE_EnsureLive (int g)
 
 static void QRE_GetColor (const rt_material_t *m, int param, qboolean *enabled, float *rgb)
 {
-	// color_emissive is a list; the two single colours are light_color and glass_color
+	// color_emissive and sss are lists; the single colours are light_color, glass_color and sss_color
 	if (param == PARAM_GLASS_COLOR)
 	{
 		*enabled = true; // the filter has no off switch: white leaves the pane clear
 		VectorCopy (m->glass_color, rgb);
+		return;
+	}
+	if (param == PARAM_SSS_COLOR)
+	{
+		*enabled = true;
+		VectorCopy (m->sss_color, rgb);
 		return;
 	}
 
@@ -1292,6 +1322,17 @@ static void QRE_SetColorEnabled (int g, int param, qboolean enabled)
 		QRE_MarkDirtyFull (m); // the colour rides the uploaded geometry
 		return;
 	}
+	if (param == PARAM_SSS_COLOR)
+	{
+		if (!enabled)
+		{
+			m->sss_color[0] = 1.0f;
+			m->sss_color[1] = 0.35f;
+			m->sss_color[2] = 0.2f;
+		}
+		QRE_MarkDirtyFull (m);
+		return;
+	}
 
 	m->has_light_color = enabled;
 	QRE_MarkDirtyLight (m);
@@ -1308,6 +1349,12 @@ static void QRE_SetColorChannel (int g, int param, int channel, float value)
 		QRE_MarkDirtyFull (m); // the colour rides the uploaded geometry
 		return;
 	}
+	if (param == PARAM_SSS_COLOR)
+	{
+		m->sss_color[channel] = value;
+		QRE_MarkDirtyFull (m);
+		return;
+	}
 
 	m->has_light_color = true;
 	m->light_color[channel] = value;
@@ -1321,6 +1368,8 @@ static float QRE_GetLightShaftFloat (const rt_material_t *m, int param)
 	case PARAM_LSHAFTS_POWER:   return m->light_shafts_power;
 	case PARAM_LSHAFTS_DIST:    return m->light_shafts_distance;
 	case PARAM_LSHAFTS_FALLOFF: return m->light_shafts_falloff;
+	case PARAM_SSS_STRENGTH:    return m->sss_strength;
+	case PARAM_SSS_RADIUS:      return m->sss_radius;
 	default:                    return 0.0f;
 	}
 }
@@ -1376,6 +1425,7 @@ static qboolean QRE_GetBool (const rt_material_t *m, int param)
 	case PARAM_EPROJ:      return m->emissive_projector;
 	case PARAM_LSHAFTS:    return m->light_shafts;
 	case PARAM_CEMIS:      return m->has_color_emissive;
+	case PARAM_CSSS:       return m->has_sss_blocks;
 	case PARAM_LSTYLES:    return m->light_styles;
 	case PARAM_METALALPHA: return m->metalness_from_normal_alpha;
 	case PARAM_MIRROR:     return m->mirror;
@@ -1394,18 +1444,50 @@ static const char *QRE_GetText (const rt_material_t *m, int param)
 	case PARAM_EMISSIVE: return m->filename_emissive;
 	case PARAM_OVERLAY:  return m->filename_overlay;
 	case PARAM_GLOSS:    return m->filename_gloss;
+	case PARAM_SSS_TEX:  return m->filename_sss;
 	default:             return "";
 	}
 }
 
 static void QRE_SetLightShaftFloat (rt_material_t *m, int param, float value)
 {
+	if (!isfinite (value))
+		value = 0.0f;
 	switch (param)
 	{
 	case PARAM_LSHAFTS_POWER:   m->light_shafts_power = CLAMP (0.0f, value, 16.0f); break;
 	case PARAM_LSHAFTS_DIST:    m->light_shafts_distance = CLAMP (0.0f, value, 25.0f); break;
 	case PARAM_LSHAFTS_FALLOFF: m->light_shafts_falloff = CLAMP (0.0f, value, 4.0f); break;
+	case PARAM_SSS_STRENGTH:
+		m->sss_strength = CLAMP (0.0f, value, 1.0f);
+		m->has_sss_strength = true;
+		break;
+	case PARAM_SSS_RADIUS:
+		m->sss_radius = CLAMP (0.0f, value, 1.0f);
+		break;
 	default:                    break;
+	}
+}
+
+static qboolean QRE_IsFullDirtyFloatParam (int param)
+{
+	switch (param)
+	{
+	case PARAM_GLASS_IOR:
+	case PARAM_GLASS_THICKNESS:
+	case PARAM_EFACTOR:
+	case PARAM_LSHAFTS_POWER:
+	case PARAM_LSHAFTS_DIST:
+	case PARAM_LSHAFTS_FALLOFF:
+	case PARAM_SSS_STRENGTH:
+	case PARAM_SSS_RADIUS:
+	case PARAM_TSCALE_U:
+	case PARAM_TSCALE_V:
+	case PARAM_TOFFS_U:
+	case PARAM_TOFFS_V:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -1413,11 +1495,7 @@ static void QRE_MarkFloatDirty (rt_material_t *m, int param)
 {
 	if (param == PARAM_LBRIGHT || param == PARAM_EFOCUS || param == PARAM_ESOFT)
 		QRE_MarkDirtyLight (m);
-	else if (param == PARAM_GLASS_IOR || param == PARAM_GLASS_THICKNESS || param == PARAM_EFACTOR ||
-	         param == PARAM_LSHAFTS_POWER || param == PARAM_LSHAFTS_DIST ||
-	         param == PARAM_LSHAFTS_FALLOFF ||
-	         param == PARAM_TSCALE_U || param == PARAM_TSCALE_V ||
-	         param == PARAM_TOFFS_U || param == PARAM_TOFFS_V)
+	else if (QRE_IsFullDirtyFloatParam (param))
 		QRE_MarkDirtyFull (m);
 	else
 		QRE_MarkDirty (m);
@@ -1451,7 +1529,7 @@ static void QRE_SetFloat (int g, int param, float value)
 		break;
 	case PARAM_METAL:    m->metalness_factor = value; m->has_metalness_factor = true; break;
 	case PARAM_BASEF:
-		if (value != value)
+		if (isnan (value))
 			value = 1.0f;
 		m->base_factor = CLAMP (0.0f, value, 4.0f);
 		break;
@@ -1460,12 +1538,12 @@ static void QRE_SetFloat (int g, int param, float value)
 	case PARAM_EFOCUS:   m->emissive_focus = value > 0.0f ? value : -1.0f; break;
 	case PARAM_ESOFT:    m->emissive_focus_soft = value; break;
 	case PARAM_TRANSPARENCY:
-		if (value != value)
+		if (isnan (value))
 			value = 1.0f;
 		m->transparency = CLAMP (0.0f, value, 1.0f);
 		break;
 	case PARAM_GLASS_IOR:
-		if (value != value || value < 0.0f)
+		if (isnan (value) || value < 0.0f)
 			value = 0.0f;
 		// the loader snaps an authored index in (0,1) to 1.0 (rt_material.c),
 		// so the setter does the same and the value round-trips; 0 stays 0
@@ -1475,7 +1553,7 @@ static void QRE_SetFloat (int g, int param, float value)
 		m->glass_ior = CLAMP (0.0f, value, 5.0f);
 		break;
 	case PARAM_GLASS_THICKNESS:
-		if (value != value || value < 0.0f)
+		if (isnan (value) || value < 0.0f)
 			value = 0.0f;
 		m->glass_thickness = CLAMP (0.0f, value, 64.0f);
 		break;
@@ -1515,9 +1593,20 @@ static void QRE_SetInt (int g, int param, int value)
 	}
 }
 
+static void QRE_SetSssBlocksEnabled (rt_material_t *m, qboolean value)
+{
+	m->has_sss_blocks = value;
+	if (value && !(m->sss_strength > 0.0f))
+	{
+		m->sss_strength = 1.0f;
+		m->has_sss_strength = true;
+	}
+}
+
 static void QRE_MarkBoolDirty (rt_material_t *m, int param)
 {
-	if (param == PARAM_ISLIGHT || param == PARAM_LSHAFTS || param == PARAM_CEMIS || param == PARAM_MIRROR || param == PARAM_LSTYLES)
+	if (param == PARAM_ISLIGHT || param == PARAM_LSHAFTS || param == PARAM_CEMIS ||
+	    param == PARAM_CSSS || param == PARAM_MIRROR || param == PARAM_LSTYLES)
 		QRE_MarkDirtyFull (m);
 	else if (param == PARAM_EPROJ)
 		QRE_MarkDirtyLight (m);
@@ -1536,6 +1625,7 @@ static void QRE_SetBool (int g, int param, qboolean value)
 	case PARAM_EPROJ:      m->emissive_projector = value; break;
 	case PARAM_LSHAFTS:    m->light_shafts = value; break;
 	case PARAM_CEMIS:      m->has_color_emissive = value; break;
+	case PARAM_CSSS:       QRE_SetSssBlocksEnabled (m, value); break;
 	case PARAM_LSTYLES:    m->light_styles = value; break;
 	case PARAM_METALALPHA: m->metalness_from_normal_alpha = value; break;
 	case PARAM_MIRROR:
@@ -1739,8 +1829,15 @@ static void QRE_SetTextDirect (int g, int param, const char *value)
 		m->color_emissive_count = 0;
 		m->has_color_emissive = false;
 		memset (m->color_emissive, 0, sizeof (m->color_emissive));
+		m->sss_block_count = 0;
+		m->has_sss_blocks = false;
+		for (int i = 0; i < RT_MAT_MAX_SSS_BLOCKS; i++)
+			m->sss_blocks[i] = (rt_sss_block_t){0};
 		if (g >= 0 && g < QRE_GROUP_MAX)
+		{
 			qre.luma_sel[g] = -1;
+			qre.sss_sel[g] = -1;
+		}
 	}
 
 	switch (param)
@@ -1750,6 +1847,14 @@ static void QRE_SetTextDirect (int g, int param, const char *value)
 	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, path, sizeof (m->filename_emissive)); break;
 	case PARAM_OVERLAY:  q_strlcpy (m->filename_overlay, path, sizeof (m->filename_overlay)); break;
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
+	case PARAM_SSS_TEX:
+		q_strlcpy (m->filename_sss, path, sizeof (m->filename_sss));
+		if (path[0] && !(m->sss_strength > 0.0f))
+		{
+			m->sss_strength = 1.0f;
+			m->has_sss_strength = true;
+		}
+		break;
 	default:             break;
 	}
 	QRE_TextureErrorClear ();
@@ -2073,7 +2178,10 @@ static void QRE_ResolveGroup (const char *texname)
 	qre.extra_count = 0;
 	qre.tmp_appended = false;
 	for (i = 0; i < QRE_GROUP_MAX; i++)
+	{
 		qre.luma_sel[i] = -1;
+		qre.sss_sel[i] = -1;
+	}
 
 	// the map list wins over the global list for duplicate names
 	for (pass = 0; pass < 2 && qre.group_count < QRE_GROUP_MAX; pass++)
@@ -4048,6 +4156,73 @@ static const rt_material_t *QRE_OriginalOf (const rt_material_t *m, rt_material_
 	return defbuf;
 }
 
+static qboolean QRE_PolyUvEqual (const float a[][2], const float b[][2])
+{
+	for (int p = 0; p < RT_MAT_EMIS_POLY_MAX; p++)
+	{
+		if (a[p][0] != b[p][0] || a[p][1] != b[p][1])
+			return false;
+	}
+	return true;
+}
+
+static qboolean QRE_SssBlockEqual (const rt_sss_block_t *a, const rt_sss_block_t *b)
+{
+	if (a->color[0] != b->color[0] || a->color[1] != b->color[1] || a->color[2] != b->color[2])
+		return false;
+	if (a->threshold != b->threshold || a->feather != b->feather || a->factor != b->factor)
+		return false;
+	if (a->poly_count != b->poly_count || a->has_threshold != b->has_threshold ||
+	    a->has_feather != b->has_feather || a->has_factor != b->has_factor)
+		return false;
+	return QRE_PolyUvEqual (a->poly_uv, b->poly_uv);
+}
+
+static qboolean QRE_EmissiveBlockEqual (const rt_emissive_t *a, const rt_emissive_t *b)
+{
+	if (a->color[0] != b->color[0] || a->color[1] != b->color[1] || a->color[2] != b->color[2])
+		return false;
+	if (a->threshold != b->threshold || a->feather != b->feather ||
+	    a->factor != b->factor || a->blend != b->blend)
+		return false;
+	if (a->poly_count != b->poly_count || a->has_threshold != b->has_threshold ||
+	    a->has_feather != b->has_feather || a->has_factor != b->has_factor ||
+	    a->has_blend != b->has_blend)
+		return false;
+	return QRE_PolyUvEqual (a->poly_uv, b->poly_uv);
+}
+
+static qboolean QRE_IsSssBlocksChanged (const rt_material_t *m, const rt_material_t *orig)
+{
+	if (m->has_sss_blocks != orig->has_sss_blocks ||
+	    m->sss_block_count != orig->sss_block_count)
+		return true;
+
+	for (int i = 0; i < m->sss_block_count; i++)
+	{
+		if (!QRE_SssBlockEqual (&m->sss_blocks[i], &orig->sss_blocks[i]))
+			return true;
+	}
+	return false;
+}
+
+static qboolean QRE_IsEmissiveBlocksChanged (const rt_material_t *m, const rt_material_t *orig)
+{
+	// every block's color and tone controls count as one parameter, and the
+	// editor's own name for a block is not one of them; the slots past the
+	// last block are not part of the list
+	if (m->has_color_emissive != orig->has_color_emissive ||
+	    m->color_emissive_count != orig->color_emissive_count)
+		return true;
+
+	for (int i = 0; i < m->color_emissive_count; i++)
+	{
+		if (!QRE_EmissiveBlockEqual (&m->color_emissive[i], &orig->color_emissive[i]))
+			return true;
+	}
+	return false;
+}
+
 static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *orig, int p)
 {
 	// the metalness checkbox is the factor's "authored" flag: it is a change
@@ -4075,29 +4250,10 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 		       m->emissive_focus_soft != orig->emissive_focus_soft;
 
 	if (p == PARAM_CEMIS)
-	{
-		// every block's color and tone controls count as one parameter, and the
-		// editor's own name for a block is not one of them; the slots past the
-		// last block are not part of the list
-		rt_emissive_t a[RT_MAT_MAX_EMISSIVE_COLORS] = {0};
-		rt_emissive_t b[RT_MAT_MAX_EMISSIVE_COLORS] = {0};
-		int           i;
+		return QRE_IsEmissiveBlocksChanged (m, orig);
 
-		if (m->has_color_emissive != orig->has_color_emissive ||
-		    m->color_emissive_count != orig->color_emissive_count)
-			return true;
-
-		for (i = 0; i < m->color_emissive_count; i++)
-		{
-			a[i] = m->color_emissive[i];
-			b[i] = orig->color_emissive[i];
-
-			memset (a[i].name, 0, sizeof (a[i].name));
-			memset (b[i].name, 0, sizeof (b[i].name));
-		}
-
-		return memcmp (a, b, sizeof (a)) != 0;
-	}
+	if (p == PARAM_CSSS)
+		return QRE_IsSssBlocksChanged (m, orig);
 
 	switch (qre_params[p].type)
 	{
@@ -4120,9 +4276,51 @@ static qboolean QRE_ParamChanged (const rt_material_t *m, const rt_material_t *o
 	}
 }
 
+static qboolean QRE_ResetBlockParam (int g, int p, const rt_material_t *orig)
+{
+	rt_material_t *m;
+
+	if (p == PARAM_CEMIS)
+	{
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->has_color_emissive = orig->has_color_emissive;
+		m->color_emissive_count = orig->color_emissive_count;
+		m->emissive_blend = orig->emissive_blend;
+		for (int i = 0; i < RT_MAT_MAX_EMISSIVE_COLORS; i++)
+			m->color_emissive[i] = orig->color_emissive[i];
+		QRE_MarkDirtyFull (m);
+		return true;
+	}
+	if (p == PARAM_SSS_STRENGTH && !orig->has_sss_strength)
+	{
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->has_sss_strength = false;
+		m->sss_strength = orig->sss_strength;
+		QRE_MarkDirtyFull (m);
+		return true;
+	}
+	if (p == PARAM_CSSS)
+	{
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		m->has_sss_blocks = orig->has_sss_blocks;
+		m->sss_block_count = orig->sss_block_count;
+		for (int i = 0; i < RT_MAT_MAX_SSS_BLOCKS; i++)
+			m->sss_blocks[i] = orig->sss_blocks[i];
+		QRE_MarkDirtyFull (m);
+		return true;
+	}
+	return false;
+}
+
 static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 {
 	rt_material_t *m;
+
+	if (QRE_ResetBlockParam (g, p, orig))
+		return;
 
 	if (p == PARAM_METAL && !orig->has_metalness_factor)
 	{
@@ -4190,18 +4388,6 @@ static void QRE_ResetParam (int g, int p, const rt_material_t *orig)
 			QRE_EnsureLive (g);
 			qre.group[g]->has_roughness_override = orig->has_roughness_override;
 		}
-		return;
-	}
-
-	if (p == PARAM_CEMIS)
-	{
-		QRE_EnsureLive (g);
-		m = qre.group[g];
-		m->has_color_emissive = orig->has_color_emissive;
-		m->color_emissive_count = orig->color_emissive_count;
-		m->emissive_blend = orig->emissive_blend;
-		memcpy (m->color_emissive, orig->color_emissive, sizeof (m->color_emissive));
-		QRE_MarkDirtyFull (m);
 		return;
 	}
 
@@ -4573,6 +4759,314 @@ static void QRE_EmissiveEditor (int g)
 	}
 }
 
+static void QRE_SssSetName (const rt_material_t *m, rt_sss_block_t *block)
+{
+	int n = 0;
+
+	for (;;)
+	{
+		char     probe[32];
+		qboolean used = false;
+
+		n++;
+		q_snprintf (probe, sizeof (probe), (block->poly_count >= 3) ? "Mask %d" : "Color %d", n);
+		for (int i = 0; i < m->sss_block_count; i++)
+		{
+			if (&m->sss_blocks[i] != block && !strcmp (m->sss_blocks[i].name, probe))
+			{
+				used = true;
+				break;
+			}
+		}
+		if (!used)
+		{
+			q_strlcpy (block->name, probe, sizeof (block->name));
+			return;
+		}
+	}
+}
+
+static qboolean QRE_SssBefore (const rt_material_t *m, int a, int b)
+{
+	const rt_sss_block_t *ba = &m->sss_blocks[a];
+	const rt_sss_block_t *bb = &m->sss_blocks[b];
+	const qboolean        mask_a = (ba->poly_count >= 3) ? true : false;
+	const qboolean        mask_b = (bb->poly_count >= 3) ? true : false;
+
+	if (mask_a != mask_b)
+		return mask_a ? false : true;
+	return QRE_EmissiveNameNumber (ba->name) < QRE_EmissiveNameNumber (bb->name);
+}
+
+static void QRE_SssSelectBlock (int g, rt_material_t *m)
+{
+	char        labels[RT_MAT_MAX_SSS_BLOCKS][32];
+	const char *items[RT_MAT_MAX_SSS_BLOCKS];
+	int         order[RT_MAT_MAX_SSS_BLOCKS];
+	int         count = 0, sel = 0;
+
+	for (int ci = 0; ci < m->sss_block_count; ci++)
+	{
+		if (m->sss_blocks[ci].name[0] == '\0')
+			QRE_SssSetName (m, &m->sss_blocks[ci]);
+		order[count++] = ci;
+	}
+	if (count == 0)
+		return;
+
+	for (int i = 0; i < count; i++)
+	{
+		for (int j = i + 1; j < count; j++)
+		{
+			if (QRE_SssBefore (m, order[j], order[i]))
+			{
+				const int t = order[i];
+				order[i] = order[j];
+				order[j] = t;
+			}
+		}
+	}
+
+	for (int i = 0; i < count; i++)
+	{
+		q_strlcpy (labels[i], m->sss_blocks[order[i]].name, sizeof (labels[i]));
+		items[i] = labels[i];
+		if (order[i] == qre.sss_sel[g])
+			sel = i;
+	}
+	qre.sss_sel[g] = order[sel];
+
+	if (m->sss_blocks[qre.sss_sel[g]].poly_count >= 3)
+	{
+		QR_GUI_LabelDim ("the mask below: drag a point, an edge to slide it, Shift+drag an edge");
+		QR_GUI_LabelDim ("along its own normal; Ctrl+click adds a point; Ctrl+wheel zooms");
+	}
+	else
+	{
+		QR_GUI_LabelDim ("the preview below: click a pixel to set the color; Ctrl+wheel zooms");
+	}
+	QR_GUI_Spacing ();
+	if (QR_GUI_ComboFiltered ("sss colors & masks", &sel, items, count,
+	                          "The SSS block the form below edits."))
+		qre.sss_sel[g] = order[sel];
+	QR_GUI_Spacing ();
+}
+
+static void QRE_SssEditPolyBlock (int g, int ci, rt_material_t *m)
+{
+	qre_preview_t *slot = QRE_PreviewFor (m);
+	float          poly_uv[RT_MAT_EMIS_POLY_MAX][2];
+	int            poly_count = m->sss_blocks[ci].poly_count;
+
+	if (!slot)
+		return;
+	for (int p = 0; p < RT_MAT_EMIS_POLY_MAX; p++)
+	{
+		poly_uv[p][0] = m->sss_blocks[ci].poly_uv[p][0];
+		poly_uv[p][1] = m->sss_blocks[ci].poly_uv[p][1];
+	}
+	if (QR_GUI_PolygonEdit ("##sss_mask_pick", (int64_t)slot->mat, slot->w, slot->h,
+	                        poly_uv, &poly_count, RT_MAT_EMIS_POLY_MAX))
+	{
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		for (int p = 0; p < RT_MAT_EMIS_POLY_MAX; p++)
+		{
+			m->sss_blocks[ci].poly_uv[p][0] = poly_uv[p][0];
+			m->sss_blocks[ci].poly_uv[p][1] = poly_uv[p][1];
+		}
+		m->sss_blocks[ci].poly_count = poly_count;
+		QRE_MarkDirtyFull (m);
+	}
+}
+
+static void QRE_SssEditColorBlock (int g, int ci, rt_material_t *m)
+{
+	if (QR_GUI_ColorRow ("##sss_bcolor", m->sss_blocks[ci].color,
+	                     "The albedo color this block matches, up to threshold.") & 1)
+		QRE_MarkDirtyFull (m);
+
+	{
+		qre_preview_t *slot = QRE_PreviewFor (m);
+		float          u = 0.5f, v = 0.5f;
+
+		if (slot && QR_GUI_ImagePick ("##sss_color_pick", (int64_t)slot->mat, slot->w, slot->h, &u, &v))
+		{
+			const int   px = CLAMP (0, (int)(u * (float)slot->w), slot->w - 1);
+			const int   py = CLAMP (0, (int)(v * (float)slot->h), slot->h - 1);
+			const byte *pix = slot->pixels + ((size_t)py * (size_t)slot->w + (size_t)px) * 4;
+
+			QRE_EnsureLive (g);
+			m = qre.group[g];
+			m->sss_blocks[ci].color[0] = pix[0] / 255.0f;
+			m->sss_blocks[ci].color[1] = pix[1] / 255.0f;
+			m->sss_blocks[ci].color[2] = pix[2] / 255.0f;
+			QRE_MarkDirtyFull (m);
+		}
+	}
+
+	if (QR_GUI_SliderFloat ("sss_threshold", &m->sss_blocks[ci].threshold, 0.0f, 1.0f,
+	                        "How far a pixel's color may differ from this block's color and still scatter."))
+		QRE_MarkDirtyFull (m);
+}
+
+static qboolean QRE_SssDrawBlock (int g, int ci)
+{
+	rt_material_t *m = qre.group[g];
+	const qboolean poly = (m->sss_blocks[ci].poly_count >= 3) ? true : false;
+	const qboolean can_paste = (qre.sss_clip_valid &&
+	                            ((qre.sss_clip.poly_count >= 3) == poly)) ? true : false;
+	int actions;
+
+	actions = QR_GUI_BlockActions (m->sss_blocks[ci].name, can_paste,
+	                               "Copy this SSS block's settings.",
+	                               "Paste the copied settings into this SSS block.",
+	                               "Remove this SSS color or mask block");
+	if (actions & 1)
+	{
+		qre.sss_clip = m->sss_blocks[ci];
+		qre.sss_clip_valid = true;
+	}
+	if (actions & 2)
+	{
+		char keep[sizeof (m->sss_blocks[ci].name)];
+
+		QRE_EnsureLive (g);
+		m = qre.group[g];
+		q_strlcpy (keep, m->sss_blocks[ci].name, sizeof (keep));
+		m->sss_blocks[ci] = qre.sss_clip;
+		q_strlcpy (m->sss_blocks[ci].name, keep, sizeof (keep));
+		QRE_MarkDirtyFull (m);
+	}
+	if (actions & 4)
+	{
+		for (int k = ci; k + 1 < m->sss_block_count; k++)
+			m->sss_blocks[k] = m->sss_blocks[k + 1];
+		m->sss_block_count--;
+		if (qre.sss_sel[g] > ci)
+			qre.sss_sel[g]--;
+		if (qre.sss_sel[g] >= m->sss_block_count)
+			qre.sss_sel[g] = m->sss_block_count - 1;
+		if (m->sss_block_count == 0)
+			m->has_sss_blocks = false;
+		QRE_MarkDirtyFull (m);
+		return false;
+	}
+
+	if (poly)
+		QRE_SssEditPolyBlock (g, ci, m);
+	else
+		QRE_SssEditColorBlock (g, ci, m);
+
+	m = qre.group[g];
+	{
+		int feather = (int)(m->sss_blocks[ci].feather + 0.5f);
+
+		if (QR_GUI_SliderInt ("sss_feather", &feather, 0, 16,
+		                      "Softens this SSS block's mask edge over this many pixels."))
+		{
+			m->sss_blocks[ci].feather = (float)feather;
+			QRE_MarkDirtyFull (m);
+		}
+	}
+	if (QR_GUI_SliderFloat ("sss_factor", &m->sss_blocks[ci].factor, 0.0f, 2.0f,
+	                        "Scales this SSS block's mask weight (0..2)."))
+		QRE_MarkDirtyFull (m);
+
+	return true;
+}
+
+static rt_sss_block_t *QRE_SssAppendNew (int g, qboolean polygon)
+{
+	rt_material_t  *m;
+	rt_sss_block_t *block;
+
+	QRE_EnsureLive (g);
+	m = qre.group[g];
+	block = &m->sss_blocks[m->sss_block_count];
+	*block = (rt_sss_block_t){0};
+	block->color[0] = 1.0f;
+	block->color[1] = 0.35f;
+	block->color[2] = 0.2f;
+	block->threshold = (m->sss_threshold > 0.0f) ? m->sss_threshold : 0.02f;
+	block->feather = m->sss_feather;
+	block->factor = 1.0f;
+	block->has_threshold = block->has_feather = block->has_factor = true;
+	if (polygon)
+	{
+		block->poly_count = 4;
+		block->poly_uv[0][0] = 0.25f; block->poly_uv[0][1] = 0.25f;
+		block->poly_uv[1][0] = 0.75f; block->poly_uv[1][1] = 0.25f;
+		block->poly_uv[2][0] = 0.75f; block->poly_uv[2][1] = 0.75f;
+		block->poly_uv[3][0] = 0.25f; block->poly_uv[3][1] = 0.75f;
+	}
+	m->sss_block_count++;
+	m->has_sss_blocks = true;
+	if (!(m->sss_strength > 0.0f))
+	{
+		m->sss_strength = 1.0f;
+		m->has_sss_strength = true;
+	}
+	QRE_SssSetName (m, block);
+	qre.sss_sel[g] = m->sss_block_count - 1;
+	QRE_MarkDirtyFull (m);
+	return block;
+}
+
+static void QRE_SssEditor (int g)
+{
+	rt_material_t *m = qre.group[g];
+
+	QRE_SssSelectBlock (g, m);
+	for (int ci = 0; ci < m->sss_block_count; ci++)
+	{
+		if (qre.sss_sel[g] != ci)
+			continue;
+		char id[32];
+		q_snprintf (id, sizeof (id), "csss%d", ci);
+		QR_GUI_PushID (id);
+		const qboolean kept = QRE_SssDrawBlock (g, ci);
+		QR_GUI_PopID ();
+		if (!kept)
+			break;
+	}
+
+	m = qre.group[g];
+	if (m->sss_block_count < RT_MAT_MAX_SSS_BLOCKS)
+	{
+		if (QR_GUI_Button ("Add color##sss"))
+			QRE_SssAppendNew (g, false);
+		QR_GUI_Tooltip ("Add a colour SSS block: scatters where pixels match its colour (up to ten)");
+		QR_GUI_SameLine ();
+		if (QR_GUI_Button ("Add mask##sss"))
+			QRE_SssAppendNew (g, true);
+		QR_GUI_Tooltip ("Add a polygon SSS mask: drag UV vertices to select scatter regions (up to ten)");
+	}
+}
+
+static qboolean QRE_IsSssLocked (const rt_material_t *m, int p)
+{
+	const qboolean is_sss = (p == PARAM_SSS_TEX || (p >= PARAM_SSS_STRENGTH && p <= PARAM_CSSS));
+
+	return is_sss && (m->material_glass || m->material_water || m->mirror);
+}
+
+static qboolean QRE_IsParamLocked (const rt_material_t *m, int p)
+{
+	if (QRE_IsSssLocked (m, p))
+		return true;
+	if (p == PARAM_ROUGH)
+		return m->mirror && !m->material_glass && !m->material_water;
+	if (p == PARAM_LCOLOR)
+		return !m->is_light;
+	if (p == PARAM_CEMIS)
+		return m->filename_emissive[0] != '\0';
+	if (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR ||
+	    p == PARAM_GLASS_THICKNESS || p == PARAM_GLASS_COLOR)
+		return !m->material_glass;
+	return false;
+}
+
 static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 {
 	const char   *label = qre_params[p].label;
@@ -4580,16 +5074,9 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// re-read every iteration: the first change of a material that has no
 	// yaml entry moves qre.group[g] into the live list (QRE_EnsureLive)
 	rt_material_t *m = qre.group[g];
-	// mirror drives roughness on its own (the synthesis gives it the last
-	// word): the override is meaningless there, and is locked at 0
-	const qboolean mirror_locks_rough = (p == PARAM_ROUGH && m->mirror && !m->material_glass && !m->material_water);
-	const qboolean is_light_locks_color = (p == PARAM_LCOLOR && !m->is_light);
-	// transparency and the per-material refraction only mean something once the
-	// material is glass
-	const qboolean glass_locks_slider = (p == PARAM_TRANSPARENCY || p == PARAM_GLASS_IOR || p == PARAM_GLASS_THICKNESS || p == PARAM_GLASS_COLOR) && !m->material_glass;
-	const qboolean emis_tex_locks_color = (p == PARAM_CEMIS && m->filename_emissive[0] != '\0');
+	const qboolean locked = QRE_IsParamLocked (m, p);
 
-	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider || emis_tex_locks_color)
+	if (locked)
 		QR_GUI_PushDisabled (1);
 
 	switch (qre_params[p].type)
@@ -4707,10 +5194,10 @@ static void QRE_ParamRow (int g, int p, const rt_material_t *orig)
 	// Reset one parameter to the state it had when the editor started
 	// (or to the defaults, for a material the editor created itself).
 	m = qre.group[g];
-	if (QR_GUI_ResetButton (label, !mirror_locks_rough && !is_light_locks_color && !glass_locks_slider && !emis_tex_locks_color && QRE_ParamChanged (m, orig, p)))
+	if (QR_GUI_ResetButton (label, !locked && QRE_ParamChanged (m, orig, p)))
 		QRE_ResetParam (g, p, orig);
 
-	if (mirror_locks_rough || is_light_locks_color || glass_locks_slider || emis_tex_locks_color)
+	if (locked)
 		QR_GUI_PopDisabled ();
 }
 
@@ -4757,6 +5244,10 @@ static void QRE_ParamWidgets (int g)
 		if (p == PARAM_CEMIS && qre.group[g]->has_color_emissive)
 		{
 			QRE_EmissiveEditor (g);
+		}
+		else if (p == PARAM_CSSS && qre.group[g]->has_sss_blocks)
+		{
+			QRE_SssEditor (g);
 		}
 	}
 }
@@ -9844,6 +10335,73 @@ static void QRE_WriteFloatLine (FILE *f, const char *key, float value)
 	fputs (line, f);
 }
 
+static void QRE_WriteSssBlocks (FILE *f, const rt_material_t *m)
+{
+	char line[96];
+
+	fputs ("    sss:\n", f);
+	for (int i = 0; i < m->sss_block_count; i++)
+	{
+		const rt_sss_block_t *b = &m->sss_blocks[i];
+
+		if (b->poly_count >= 3)
+		{
+			fputs ("      - polygon:", f);
+			for (int p = 0; p < b->poly_count; p++)
+			{
+				q_snprintf (line, sizeof (line), " %.4f,%.4f", b->poly_uv[p][0], b->poly_uv[p][1]);
+				fputs (line, f);
+			}
+			fputs ("\n", f);
+		}
+		else
+		{
+			q_snprintf (line, sizeof (line), "      - color: %02x%02x%02x\n",
+			            (int)(b->color[0] * 255.0f + 0.5f) & 0xff,
+			            (int)(b->color[1] * 255.0f + 0.5f) & 0xff,
+			            (int)(b->color[2] * 255.0f + 0.5f) & 0xff);
+			fputs (line, f);
+			q_snprintf (line, sizeof (line), "        threshold: %.6g\n", b->threshold);
+			fputs (line, f);
+		}
+		q_snprintf (line, sizeof (line), "        feather: %.6g\n", b->feather);
+		fputs (line, f);
+		q_snprintf (line, sizeof (line), "        factor: %.6g\n", b->factor);
+		fputs (line, f);
+	}
+}
+
+static qboolean QRE_HasCustomSssColor (const rt_material_t *m)
+{
+	return m->sss_color[0] != 1.0f || m->sss_color[1] != 0.35f || m->sss_color[2] != 0.2f;
+}
+
+static void QRE_WriteSssFields (FILE *f, const rt_material_t *m)
+{
+	const qboolean has_blocks = m->has_sss_blocks && m->sss_block_count > 0;
+	const qboolean active_sss = m->sss_strength > 0.0f;
+
+	if (m->filename_sss[0])
+	{
+		char line[MAX_QPATH + 32];
+
+		q_snprintf (line, sizeof (line), "    texture_sss: %s\n", m->filename_sss);
+		fputs (line, f);
+	}
+	if (active_sss || m->has_sss_strength || m->filename_sss[0] != '\0' || has_blocks)
+		QRE_WriteFloatLine (f, "sss_strength", m->sss_strength);
+	if (m->sss_radius != 0.02f || active_sss)
+		QRE_WriteFloatLine (f, "sss_radius", m->sss_radius);
+	if (QRE_HasCustomSssColor (m) || active_sss)
+		QRE_WriteColor (f, "sss_color", m->sss_color);
+	if (has_blocks)
+		QRE_WriteSssBlocks (f, m);
+	if (m->sss_threshold != 0.02f)
+		QRE_WriteFloatLine (f, "sss_threshold", m->sss_threshold);
+	if (m->sss_feather != 0.0f)
+		QRE_WriteFloatLine (f, "sss_feather", m->sss_feather);
+}
+
 static void QRE_WriteLightShaftFields (FILE *f, const rt_material_t *m)
 {
 	if (m->light_shafts)
@@ -9937,6 +10495,7 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 	if (m->material_glass &&
 	    (m->glass_color[0] != 1.0f || m->glass_color[1] != 1.0f || m->glass_color[2] != 1.0f))
 		QRE_WriteColor (f, "glass_color", m->glass_color);
+	QRE_WriteSssFields (f, m);
 	if (m->exact_normals)
 		fprintf (f, "    exact_normals: true\n");
 	if (m->force_rasterize)
@@ -10954,6 +11513,19 @@ static void QRE_DtalDebugOff (void)
 		QR_Editor_HostCvarSet ("rt_dtal_debug", "0");
 }
 
+static void QRE_ResetBlockSelections (void)
+{
+	for (int i = 0; i < QRE_GROUP_MAX; i++)
+	{
+		qre.luma_sel[i] = -1;
+		qre_instances[0].luma_sel[i] = -1;
+		qre_instances[1].luma_sel[i] = -1;
+		qre.sss_sel[i] = -1;
+		qre_instances[0].sss_sel[i] = -1;
+		qre_instances[1].sss_sel[i] = -1;
+	}
+}
+
 static void QRE_BackToChooser (void)
 {
 	if (Tasks_IsWorker ())
@@ -10992,17 +11564,9 @@ static void QRE_BackToChooser (void)
 	qre.tmp_appended = false;
 	qre.mat_clip_valid = false;
 	qre.luma_clip_valid = false;
+	qre.sss_clip_valid = false;
 	memset (qre_instances, 0, sizeof (qre_instances));
-	{
-		int i;
-
-		for (i = 0; i < QRE_GROUP_MAX; i++)
-		{
-			qre.luma_sel[i] = -1;
-			qre_instances[0].luma_sel[i] = -1;
-			qre_instances[1].luma_sel[i] = -1;
-		}
-	}
+	QRE_ResetBlockSelections ();
 	qre_instance_cur = 0;
 	qre.sel_light_valid = false;
 	qre.custom_placing = false;
@@ -12393,16 +12957,7 @@ static void QRE_StartEditor (void)
 
 	memset (&qre, 0, sizeof (qre));
 	memset (qre_instances, 0, sizeof (qre_instances));
-	{
-		int i;
-
-		for (i = 0; i < QRE_GROUP_MAX; i++)
-		{
-			qre.luma_sel[i] = -1;
-			qre_instances[0].luma_sel[i] = -1;
-			qre_instances[1].luma_sel[i] = -1;
-		}
-	}
+	QRE_ResetBlockSelections ();
 	QRE_ResetActions ();
 	QRE_TextureBrowserShutdownTasks ();
 	qre_textbrowser_built = false;

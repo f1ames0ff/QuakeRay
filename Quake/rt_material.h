@@ -15,6 +15,7 @@
    hold several differently coloured emissive regions (window panes, lamps),
    each with its own tone controls. */
 #define RT_MAT_MAX_EMISSIVE_COLORS 10
+#define RT_MAT_MAX_SSS_BLOCKS 10
 #define RT_MAT_EMIS_POLY_MAX 16
 
 /* One colour_emissive block: a colour and the tone controls that work for it
@@ -37,6 +38,22 @@ typedef struct rt_emissive_s
     qboolean has_blend;
 } rt_emissive_t;
 
+/* One subsurface scattering mask block: selects texels by colour or polygon
+   over the base texture, with threshold, feather and strength factor. */
+typedef struct rt_sss_block_s
+{
+    vec3_t   color;
+    float    threshold;
+    float    feather;
+    float    factor;
+    char     name[32];
+    int      poly_count;
+    float    poly_uv[RT_MAT_EMIS_POLY_MAX][2];
+    qboolean has_threshold;
+    qboolean has_feather;
+    qboolean has_factor;
+} rt_sss_block_t;
+
 /* Capacities of the live material lists: RT_MAT_GetList returns arrays of
    these sizes, and a snapshot of the lists must be allocated for them. */
 enum {
@@ -54,6 +71,7 @@ typedef struct rt_material_s {
     char filename_emissive[MAX_QPATH];
     char filename_overlay[MAX_QPATH];
     char filename_gloss[MAX_QPATH];
+    char filename_sss[MAX_QPATH];
     float    texture_scale_u, texture_scale_v;
     float    texture_offset_u, texture_offset_v;
     float bump_scale;
@@ -97,10 +115,20 @@ typedef struct rt_material_s {
     float    glass_ior;
     float    glass_thickness;
     vec3_t   glass_color;
+    float    sss_strength;
+    qboolean has_sss_strength;
+    vec3_t   sss_color;
+    float    sss_radius;
+    rt_sss_block_t sss_blocks[RT_MAT_MAX_SSS_BLOCKS];
+    int      sss_block_count;
+    qboolean has_sss_blocks;
+    float    sss_threshold;
+    float    sss_feather;
     qboolean valid;
 } rt_material_t;
 
 void RT_MAT_Init(void);
+void RT_MAT_InitSubsurfaceDefaults(rt_material_t *mat);
 void RT_MAT_Shutdown(void);
 
 void RT_MAT_ChangeMap(const char *mapname);
@@ -151,6 +179,7 @@ enum {
     RT_MAT_TEX_EMISSIVE,
     RT_MAT_TEX_OVERLAY,
     RT_MAT_TEX_GLOSS,
+    RT_MAT_TEX_SSS,
 };
 
 byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int *outHeight);

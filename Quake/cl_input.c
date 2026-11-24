@@ -292,12 +292,7 @@ float CL_KeyState (kbutton_t *key)
 			val = 0; //	I_Error ();
 	}
 	if (impulseup && !impulsedown)
-	{
-		if (down)
-			val = 0; //	I_Error ();
-		else
-			val = 0; // released this frame
-	}
+		val = 0; // released this frame
 	if (!impulsedown && !impulseup)
 	{
 		if (down)

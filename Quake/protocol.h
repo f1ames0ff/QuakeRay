@@ -388,6 +388,37 @@ typedef struct entity_state_s
 	unsigned short lerp;
 #endif
 } entity_state_t;
+
+static inline qboolean EntityState_TransformEquals (const entity_state_t *a, const entity_state_t *b)
+{
+	return memcmp (a->origin, b->origin, sizeof (a->origin)) == 0 &&
+	       memcmp (a->angles, b->angles, sizeof (a->angles)) == 0 &&
+	       memcmp (a->velocity, b->velocity, sizeof (a->velocity)) == 0;
+}
+
+static inline qboolean EntityState_VisualEquals (const entity_state_t *a, const entity_state_t *b)
+{
+	return a->modelindex == b->modelindex && a->frame == b->frame && a->effects == b->effects &&
+	       a->colormap == b->colormap && a->skin == b->skin && a->scale == b->scale &&
+	       a->pmovetype == b->pmovetype && a->traileffectnum == b->traileffectnum &&
+	       a->emiteffectnum == b->emiteffectnum;
+}
+
+static inline qboolean EntityState_AttachmentEquals (const entity_state_t *a, const entity_state_t *b)
+{
+	return a->eflags == b->eflags && a->tagindex == b->tagindex && a->tagentity == b->tagentity &&
+	       memcmp (a->colormod, b->colormod, sizeof (a->colormod)) == 0 &&
+	       a->alpha == b->alpha && a->solidsize == b->solidsize
+#ifdef LERP_BANDAID
+	       && a->lerp == b->lerp
+#endif
+	       ;
+}
+
+static inline qboolean EntityState_Equals (const entity_state_t *a, const entity_state_t *b)
+{
+	return EntityState_TransformEquals (a, b) && EntityState_VisualEquals (a, b) && EntityState_AttachmentEquals (a, b);
+}
 #define EFLAGS_STEP          1
 //#define EFLAGS_GLOWTRAIL		2
 #define EFLAGS_VIEWMODEL     4 // does not appear in reflections/third person. attached to the view.

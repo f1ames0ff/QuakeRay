@@ -57,6 +57,33 @@ static double AliasPmf(int index, const float *primary, const uint32_t *alias, i
     return probability / (double)count;
 }
 
+static void SampleAliasHits(const float *primary, const uint32_t *alias, int count, int samples,
+                            int *hits, const char *name)
+{
+    for (int s = 0; s < samples; s++)
+    {
+        const double u = NextUnit();
+        int          column = (int)(u * (double)count);
+        double       frac = u * (double)count - (double)column;
+
+        if (column < 0)
+            column = 0;
+        if (column >= count)
+            column = count - 1;
+
+        if (frac < 0.0)
+            frac = 0.0;
+        if (frac >= 1.0)
+            frac = nextafter(1.0, 0.0);
+
+        const int chosen = (frac < (double)primary[column]) ? column : (int)alias[column];
+
+        CHECK(chosen >= 0 && chosen < count, "alias draw range %s: %d", name, chosen);
+        if (chosen >= 0 && chosen < count)
+            hits[chosen]++;
+    }
+}
+
 static void TestAliasDistribution(const char *name, const double *weights, int count, double tolerance)
 {
     float    *primary = (float *)malloc((size_t)count * sizeof(float));
@@ -109,27 +136,7 @@ static void TestAliasDistribution(const char *name, const double *weights, int c
 
     if (hits != NULL)
     {
-        for (int s = 0; s < samples; s++)
-        {
-            const double u = NextUnit();
-            int          column = (int)(u * (double)count);
-            double       frac = u * (double)count - (double)column;
-
-            if (column < 0)
-                column = 0;
-            if (column >= count)
-                column = count - 1;
-
-            if (frac < 0.0)
-                frac = 0.0;
-            if (frac >= 1.0)
-                frac = nextafter(1.0, 0.0);
-
-            const int chosen = (frac < (double)primary[column]) ? column : (int)alias[column];
-
-            CHECK(chosen >= 0 && chosen < count, "alias draw range %s: %d", name, chosen);
-            hits[chosen]++;
-        }
+        SampleAliasHits(primary, alias, count, samples, hits, name);
 
         for (int i = 0; i < count; i++)
         {
@@ -642,6 +649,80 @@ static int CompareUint32(const void *a, const void *b)
     return va < vb ? -1 : (va > vb ? 1 : 0);
 }
 
+static void VerifyClusterSelectionSampling(const rt_cluster_select_t *select, const double *masses,
+                                           int count, int samples)
+{
+    double sum = 0.0;
+    double squareSum = 0.0;
+    int    selectedCount = 0;
+
+    for (int s = 0; s < samples; s++)
+    {
+        const float u0 = (float)NextUnit();
+        const float uBranch = (float)NextUnit();
+        const float uTail = (float)NextUnit();
+
+        uint32_t chosen = 0;
+        float    probability = 0.0f;
+
+        int useTail = 0;
+
+        if (select->tailCount <= 0)
+            useTail = 0;
+        else if (select->fastCount <= 0)
+            useTail = 1;
+        else
+            useTail = (uBranch < select->beta) ? 1 : 0;
+
+        if (useTail)
+        {
+            int column = (int)(uTail * (float)select->tailCount);
+
+            if (column < 0)
+                column = 0;
+            if (column >= select->tailCount)
+                column = select->tailCount - 1;
+
+            const float fraction = uTail * (float)select->tailCount - (float)column;
+            const int   tailed = (fraction < select->tailProb[column]) ? column : (int)select->tailAlias[column];
+            const float memberProbability = select->tailMarginal[tailed];
+
+            probability = select->beta * memberProbability;
+            chosen = select->tailIndex[tailed];
+        }
+        else
+        {
+            uint32_t slot = 0;
+            float    fastProbability = 0.0f;
+
+            if (RT_ClusterSelect_FastSelect(select, masses, u0, &slot, &fastProbability))
+            {
+                probability = (1.0f - select->beta) * fastProbability;
+                chosen = select->fastIndex[slot];
+            }
+        }
+
+        if (probability > 0.0f && chosen < (uint32_t)count)
+        {
+            const double estimator = 1.0 / (double)probability;
+
+            sum += estimator;
+            squareSum += estimator * estimator;
+            selectedCount++;
+        }
+    }
+
+    const double mean = sum / (double)samples;
+    const double expected = (double)count;
+    const double variance = squareSum / (double)samples - mean * mean;
+    const double standardError = sqrt(fmax(variance, 0.0) / (double)samples);
+
+    CHECK(selectedCount > 0, "cluster selection draws %d", count);
+    CHECK(4.0 * standardError <= expected * 0.05, "cluster selection decides %d: se %.6f", count, standardError);
+    CHECK(fabs(mean - expected) <= 4.0 * standardError + expected * 1e-4,
+          "cluster selection mean %d: %.6f vs %.6f (se %.6f)", count, mean, expected, standardError);
+}
+
 static void TestClusterSelectionCounts(void)
 {
     const int counts[] = { 0, 1, 128, 129, 512, 2048 };
@@ -656,6 +737,12 @@ static void TestClusterSelectionCounts(void)
         double *masses = (double *)calloc((size_t)(count > 0 ? count : 1), sizeof(double));
 
         CHECK(candidates != NULL && masses != NULL, "cluster selection allocation %d", count);
+        if (candidates == NULL || masses == NULL)
+        {
+            free(candidates);
+            free(masses);
+            continue;
+        }
 
         for (int i = 0; i < count; i++)
         {
@@ -681,90 +768,8 @@ static void TestClusterSelectionCounts(void)
                 CHECK(select.tailProb[i] > 0.0f, "tail support %d index %d: %.9f", count, i, (double)select.tailProb[i]);
                 CHECK(select.tailAlias[i] < (uint32_t)select.tailCount, "tail alias range %d", count);
             }
-        }
 
-        if (count > 0)
-        {
-            double sum = 0.0;
-            double squareSum = 0.0;
-            double pAccum = 0.0;
-            int    selectedCount = 0;
-            int    tailDraws = 0;
-            int    fastDraws = 0;
-
-            for (int s = 0; s < samples; s++)
-            {
-                const float u0 = (float)NextUnit();
-                const float uBranch = (float)NextUnit();
-                const float uTail = (float)NextUnit();
-
-                uint32_t chosen = 0;
-                float    probability = 0.0f;
-
-                int useTail = 0;
-
-                if (select.tailCount <= 0)
-                    useTail = 0;
-                else if (select.fastCount <= 0)
-                    useTail = 1;
-                else
-                    useTail = (uBranch < select.beta) ? 1 : 0;
-
-                if (useTail)
-                {
-                    int column = (int)(uTail * (float)select.tailCount);
-
-                    if (column < 0)
-                        column = 0;
-                    if (column >= select.tailCount)
-                        column = select.tailCount - 1;
-
-                    const float fraction = uTail * (float)select.tailCount - (float)column;
-                    const int   tailed = (fraction < select.tailProb[column]) ? column : (int)select.tailAlias[column];
-                    const float memberProbability = select.tailMarginal[tailed];
-
-                    probability = select.beta * memberProbability;
-                    chosen = select.tailIndex[tailed];
-                }
-                else
-                {
-                    uint32_t slot = 0;
-                    float    fastProbability = 0.0f;
-
-                    if (RT_ClusterSelect_FastSelect(&select, masses, u0, &slot, &fastProbability))
-                    {
-                        probability = (1.0f - select.beta) * fastProbability;
-                        chosen = select.fastIndex[slot];
-                    }
-                }
-
-                pAccum += probability;
-                tailDraws += useTail;
-                fastDraws += useTail ? 0 : 1;
-
-                if (probability > 0.0f && chosen < (uint32_t)count)
-                {
-                    const double estimator = 1.0 / (double)probability;
-
-                    sum += estimator;
-                    squareSum += estimator * estimator;
-                    selectedCount++;
-                }
-            }
-
-            (void)pAccum;
-            (void)tailDraws;
-            (void)fastDraws;
-
-            const double mean = sum / (double)samples;
-            const double expected = (double)count;
-            const double variance = squareSum / (double)samples - mean * mean;
-            const double standardError = sqrt(fmax(variance, 0.0) / (double)samples);
-
-            CHECK(selectedCount > 0, "cluster selection draws %d", count);
-            CHECK(4.0 * standardError <= expected * 0.05, "cluster selection decides %d: se %.6f", count, standardError);
-            CHECK(fabs(mean - expected) <= 4.0 * standardError + expected * 1e-4,
-                  "cluster selection mean %d: %.6f vs %.6f (se %.6f)", count, mean, expected, standardError);
+            VerifyClusterSelectionSampling(&select, masses, count, samples);
         }
 
         RT_ClusterSelect_Free(&select);
@@ -781,6 +786,12 @@ static void TestClusterSelectionOrderIdentity(void)
     rt_cluster_candidate_t *shuffled = (rt_cluster_candidate_t *)calloc((size_t)count, sizeof(rt_cluster_candidate_t));
 
     CHECK(candidates != NULL && shuffled != NULL, "order identity allocation");
+    if (candidates == NULL || shuffled == NULL)
+    {
+        free(candidates);
+        free(shuffled);
+        return;
+    }
 
     for (int i = 0; i < count; i++)
     {

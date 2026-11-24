@@ -615,6 +615,8 @@ else
 			.transform = transform,
 		};
 
+		TexMgr_FillSubsurfaceUpload (tx, &info);
+
 		const double prof_upload = RT_Prof_Begin ();
 		qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALIAS);
 		QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
@@ -784,6 +786,8 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.defaultEmission = 0,
 				.transform = transform,
 			};
+
+			TexMgr_FillSubsurfaceUpload (tx, &info);
 
 			const double prof_upload = RT_Prof_Begin ();
 			qrUploadLanePush (vulkan_globals.instance, QR_UPLOAD_LANE_ALIAS_SURF);
