@@ -92,6 +92,10 @@ typedef struct gltexture_s
 	float                rtglassthickness;
 	float                rtglasscolor[3];
 	qboolean             rtwater;
+	qboolean             rtsss;
+	float                rtssscolor[3];
+	float                rtsssradius;
+	float                rtsssstrength;
 	float                rtuvscale[2];
 	float                rtuvoffset[2];
 	qboolean             rtemissive;
@@ -198,5 +202,9 @@ void TexMgr_ReloadAllImages (void);
 // - or call of TexMgr_RT_SpecialNullEnd - just submit 'qrCreateStaticMaterial' with data from 1st call
 void TexMgr_RT_SpecialStart (float default_rough, float default_metallic);
 void TexMgr_RT_SpecialEnd (void);
+
+/* Copies immutable per-frame subsurface scattering fields into upload info
+   when the surface is opaque or alpha-tested and not a sky volume. */
+void TexMgr_FillSubsurfaceUpload (const gltexture_t *tx, QrGeometryUploadInfo *info);
 
 #endif /* _GL_TEXMAN_H */

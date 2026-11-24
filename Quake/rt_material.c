@@ -6,6 +6,7 @@
 #include "rt_pkz.h"
 
 #include <errno.h>
+#include <math.h>
 
 #ifndef _WIN32
 #include <dirent.h>
@@ -230,6 +231,25 @@ static byte *rt_decode_tga(const byte *buf, int len, int *outW, int *outH)
     return out;
 }
 
+static void rt_mat_normalize_tex_path(const char *base, char *norm, size_t norm_size)
+{
+    const char *src = base;
+    char       *dst = norm;
+
+    while (*src == ' ' || *src == '\t')
+        src++;
+    if (src[0] == '.' && (src[1] == '/' || src[1] == '\\'))
+        src += 2;
+    while (*src == '/' || *src == '\\')
+        src++;
+    while (*src && dst < norm + norm_size - 1)
+    {
+        const char c = *src++;
+        *dst++ = (c == '\\') ? '/' : c;
+    }
+    *dst = '\0';
+}
+
 byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int *outHeight)
 {
     const char *base = NULL;
@@ -240,6 +260,7 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
         case RT_MAT_TEX_EMISSIVE: base = mat->filename_emissive; break;
         case RT_MAT_TEX_OVERLAY:  base = mat->filename_overlay; break;
         case RT_MAT_TEX_GLOSS:    base = mat->filename_gloss; break;
+        case RT_MAT_TEX_SSS:      base = mat->filename_sss; break;
         default: return NULL;
     }
     if (!base[0])
@@ -251,23 +272,7 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
        separators and a leading ./ or /, so a hand-edited yaml resolves like a
        path typed in the editor's field. */
     char norm[MAX_QPATH];
-    {
-        const char *src = base;
-        char       *dst = norm;
-
-        while (*src == ' ' || *src == '\t')
-            src++;
-        if (src[0] == '.' && (src[1] == '/' || src[1] == '\\'))
-            src += 2;
-        while (*src == '/' || *src == '\\')
-            src++;
-        while (*src && dst < norm + sizeof (norm) - 1)
-        {
-            const char c = *src++;
-            *dst++ = (c == '\\') ? '/' : c;
-        }
-        *dst = '\0';
-    }
+    rt_mat_normalize_tex_path(base, norm, sizeof(norm));
     base = norm;
 
     const char *dot = strrchr(base, '.');
@@ -352,6 +357,22 @@ byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int
 // .mat parser (ported from Q2RTX material.c load_material_file)
 // ---------------------------------------------------------------------------
 
+void RT_MAT_InitSubsurfaceDefaults(rt_material_t *mat)
+{
+    mat->sss_strength = 0.0f;
+    mat->has_sss_strength = false;
+    mat->sss_color[0] = 1.0f;
+    mat->sss_color[1] = 0.35f;
+    mat->sss_color[2] = 0.2f;
+    mat->sss_radius = 0.02f;
+    mat->sss_block_count = 0;
+    mat->has_sss_blocks = false;
+    mat->sss_threshold = 0.02f;
+    mat->sss_feather = 0.0f;
+    for (int i = 0; i < RT_MAT_MAX_SSS_BLOCKS; i++)
+        mat->sss_blocks[i] = (rt_sss_block_t){0};
+}
+
 static void rt_mat_reset(rt_material_t *mat)
 {
     memset(mat, 0, sizeof(*mat));
@@ -375,6 +396,7 @@ static void rt_mat_reset(rt_material_t *mat)
     mat->light_shafts_falloff = 1.0f;
     mat->light_styles = false;
     mat->color_emissive_threshold = 0.02f;
+    RT_MAT_InitSubsurfaceDefaults(mat);
 }
 
 static qboolean rt_mat_parse_bool(const char *value)
@@ -490,6 +512,85 @@ static rt_emissive_t *rt_mat_add_emissive_color(rt_material_t *mat, const char *
     return block;
 }
 
+static rt_sss_block_t *rt_mat_append_sss_block(rt_material_t *mat)
+{
+    rt_sss_block_t *block;
+
+    if (mat->sss_block_count >= RT_MAT_MAX_SSS_BLOCKS)
+    {
+        return NULL;
+    }
+
+    block = &mat->sss_blocks[mat->sss_block_count];
+    *block = (rt_sss_block_t){0};
+    block->color[0] = 1.0f;
+    block->color[1] = 0.35f;
+    block->color[2] = 0.2f;
+    block->threshold = mat->sss_threshold;
+    block->feather = mat->sss_feather;
+    block->factor = 1.0f;
+    mat->sss_block_count++;
+    mat->has_sss_blocks = true;
+    return block;
+}
+
+static rt_sss_block_t *rt_mat_add_sss_color(rt_material_t *mat, const char *value)
+{
+    vec3_t          c;
+    char            buf[64];
+    size_t          len;
+    rt_sss_block_t *block;
+
+    if (!value)
+        return NULL;
+
+    while (*value == ' ' || *value == '\t')
+        value++;
+    if (*value == '#')
+        value++;
+
+    len = strlen(value);
+    while (len > 0 && (value[len - 1] == ' ' || value[len - 1] == '\t' || value[len - 1] == '\r'))
+        len--;
+    if (len == 0 || len >= sizeof(buf))
+        return NULL;
+
+    q_strlcpy(buf, value, len + 1);
+
+    if (!rt_mat_parse_hex_color(buf, c))
+    {
+        Con_DWarning("RT mat: material '%s': sss '%s' is not rrggbb; ignored\n",
+                     mat->name, buf);
+        return NULL;
+    }
+
+    block = rt_mat_append_sss_block(mat);
+    if (block)
+        VectorCopy(c, block->color);
+    return block;
+}
+
+static void rt_mat_add_sss_color_list(rt_material_t *mat, const char *value)
+{
+    char  buf[1024];
+    char *p, *next;
+
+    q_strlcpy(buf, value, sizeof(buf));
+    for (p = buf; p && *p; p = next)
+    {
+        char *end;
+
+        next = strchr(p, ',');
+        if (next)
+            *next++ = '\0';
+        end = p + strlen(p);
+        while (end > p && (end[-1] == ' ' || end[-1] == '\t'))
+            *--end = '\0';
+        if (*p)
+            rt_mat_add_sss_color(mat, p);
+    }
+}
+
 // The blend modes by name, so the file reads like what the shader does:
 // "normal" is the coverage blend, "screen" adds the emission on top, "overlay"
 // and "hard light" are the two halves of the overlay formula (the base and the
@@ -552,6 +653,47 @@ static int rt_mat_parse_emissive_blend(const char *value)
     return (int)v;
 }
 
+static float rt_mat_clamp_unit_float(const char *mat_name, const char *key, const char *value)
+{
+    const float raw = (float)atof(value);
+    float       v   = raw;
+
+    if (!isfinite(v) || v < 0.0f)
+        v = 0.0f;
+    else if (v > 1.0f)
+        v = 1.0f;
+
+    if (!isfinite(raw) || v != raw)
+        Con_DWarning("RT mat: material '%s': %s '%s' is not in 0..1; using %.3g\n", mat_name, key, value, v);
+    return v;
+}
+
+static void rt_mat_set_sss_or_warn(rt_material_t *mat, const char *key, const char *value)
+{
+    if (!q_strcasecmp(key, "texture_sss"))
+        q_strlcpy(mat->filename_sss, value, sizeof(mat->filename_sss));
+    else if (!q_strcasecmp(key, "sss_strength"))
+    {
+        mat->sss_strength = rt_mat_clamp_unit_float(mat->name, "sss_strength", value);
+        mat->has_sss_strength = true;
+    }
+    else if (!q_strcasecmp(key, "sss_radius"))
+        mat->sss_radius = rt_mat_clamp_unit_float(mat->name, "sss_radius", value);
+    else if (!q_strcasecmp(key, "sss_color"))
+    {
+        if (!rt_mat_parse_hex_color(value, mat->sss_color))
+            Con_DWarning("RT mat: material '%s': sss_color '%s' is not rrggbb; ignored\n", mat->name, value);
+    }
+    else if (!q_strcasecmp(key, "sss_threshold"))
+        mat->sss_threshold = CLAMP(0.0f, (float)atof(value), 1.0f);
+    else if (!q_strcasecmp(key, "sss_feather"))
+        mat->sss_feather = (float)(int)(CLAMP(0.0f, (float)atof(value), 16.0f) + 0.5f);
+    else if (!q_strcasecmp(key, "sss"))
+        rt_mat_add_sss_color_list(mat, value);
+    else
+        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+}
+
 static void rt_mat_set_light_shaft_or_warn(rt_material_t *mat, const char *key, const char *value)
 {
     if (!q_strcasecmp(key, "light_shafts"))
@@ -563,7 +705,7 @@ static void rt_mat_set_light_shaft_or_warn(rt_material_t *mat, const char *key, 
     else if (!q_strcasecmp(key, "light_shafts_falloff"))
         mat->light_shafts_falloff = CLAMP(0.0f, (float)atof(value), 4.0f);
     else
-        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+        rt_mat_set_sss_or_warn(mat, key, value);
 }
 
 static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char *value)
@@ -809,6 +951,242 @@ static void rt_mat_yaml_scalar(const yaml_node_t *node, char *out, size_t outsiz
     out[n] = 0;
 }
 
+static int rt_mat_parse_polygon_uv(const char *s, float poly_uv[RT_MAT_EMIS_POLY_MAX][2])
+{
+    int count = 0;
+
+    while (*s && count < RT_MAT_EMIS_POLY_MAX)
+    {
+        char *end;
+        float u = (float)strtod(s, &end);
+        float v;
+
+        if (end == s)
+            break;
+        s = end;
+        while (*s == ' ' || *s == '\t' || *s == ',')
+            s++;
+        v = (float)strtod(s, &end);
+        if (end == s)
+            break;
+        s = end;
+        poly_uv[count][0] = CLAMP(0.0f, u, 1.0f);
+        poly_uv[count][1] = CLAMP(0.0f, v, 1.0f);
+        count++;
+        while (*s == ' ' || *s == '\t')
+            s++;
+    }
+    return count >= 3 ? count : 0;
+}
+
+static void *rt_mat_append_emissive_block_void(rt_material_t *dest)
+{
+    return rt_mat_append_emissive_block(dest);
+}
+
+static void *rt_mat_append_sss_block_void(rt_material_t *dest)
+{
+    return rt_mat_append_sss_block(dest);
+}
+
+static void rt_mat_add_emissive_color_void(rt_material_t *dest, const char *value)
+{
+    (void)rt_mat_add_emissive_color(dest, value);
+}
+
+static void rt_mat_add_sss_color_void(rt_material_t *dest, const char *value)
+{
+    (void)rt_mat_add_sss_color(dest, value);
+}
+
+typedef struct
+{
+    void *(*append_block)(rt_material_t *dest);
+    void (*parse_pair)(rt_material_t *dest, void *block, const char *kb, const char *vb);
+    void (*add_scalar)(rt_material_t *dest, const char *valbuf);
+} rt_mat_block_seq_ops_t;
+
+static void rt_mat_parse_mapping_pairs(yaml_document_t *doc, yaml_node_t *sitem,
+                                       rt_material_t *dest, void *block,
+                                       const rt_mat_block_seq_ops_t *ops)
+{
+    for (yaml_node_pair_t *bp = sitem->data.mapping.pairs.start;
+         bp < sitem->data.mapping.pairs.top; bp++)
+    {
+        yaml_node_t *bk = yaml_document_get_node(doc, bp->key);
+        yaml_node_t *bv = yaml_document_get_node(doc, bp->value);
+        char kb[64], vb[512];
+
+        if (!bk || !bv || bk->type != YAML_SCALAR_NODE || bv->type != YAML_SCALAR_NODE)
+            continue;
+        rt_mat_yaml_scalar(bk, kb, sizeof(kb));
+        rt_mat_yaml_scalar(bv, vb, sizeof(vb));
+        ops->parse_pair(dest, block, kb, vb);
+    }
+}
+
+static void rt_mat_parse_block_sequence(yaml_document_t *doc, yaml_node_t *mv,
+                                        rt_material_t *dest,
+                                        const rt_mat_block_seq_ops_t *ops)
+{
+    for (yaml_node_item_t *sit = mv->data.sequence.items.start;
+         sit < mv->data.sequence.items.top; sit++)
+    {
+        yaml_node_t *sitem = yaml_document_get_node(doc, *sit);
+
+        if (!sitem)
+            continue;
+
+        if (sitem->type == YAML_MAPPING_NODE)
+        {
+            void *block = ops->append_block(dest);
+            if (block)
+                rt_mat_parse_mapping_pairs(doc, sitem, dest, block, ops);
+        }
+        else if (sitem->type == YAML_SCALAR_NODE)
+        {
+            char valbuf[1024];
+
+            rt_mat_yaml_scalar(sitem, valbuf, sizeof(valbuf));
+            ops->add_scalar(dest, valbuf);
+        }
+    }
+}
+
+static void rt_mat_parse_emissive_block_pair(rt_material_t *dest, void *block_ptr,
+                                             const char *kb, const char *vb)
+{
+    rt_emissive_t *block = (rt_emissive_t *)block_ptr;
+
+    if (!q_strcasecmp(kb, "color"))
+    {
+        const char *hex = (vb[0] == '#') ? vb + 1 : vb;
+
+        if (!rt_mat_parse_hex_color(hex, block->color))
+            Con_DWarning("RT mat: material '%s': color '%s' is not rrggbb; white is used\n",
+                         dest->name, vb);
+    }
+    else if (!q_strcasecmp(kb, "polygon"))
+        block->poly_count = rt_mat_parse_polygon_uv(vb, block->poly_uv);
+    else if (!q_strcasecmp(kb, "threshold"))
+    {
+        block->threshold = (float)atof(vb);
+        block->has_threshold = true;
+    }
+    else if (!q_strcasecmp(kb, "feather"))
+    {
+        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
+        block->has_feather = true;
+    }
+    else if (!q_strcasecmp(kb, "emissive_factor") || !q_strcasecmp(kb, "factor"))
+    {
+        block->factor = (float)atof(vb);
+        block->has_factor = true;
+    }
+    else if (!q_strcasecmp(kb, "blend"))
+    {
+        const int v = rt_mat_parse_emissive_blend(vb);
+
+        if (v == -2)
+            Con_DWarning("RT mat: material '%s': blend '%s' is not a mode; the material's is used\n",
+                         dest->name, vb);
+        else
+        {
+            block->blend = v;
+            block->has_blend = true;
+        }
+    }
+}
+
+static void rt_mat_parse_sss_block_pair(rt_material_t *dest, void *block_ptr,
+                                        const char *kb, const char *vb)
+{
+    rt_sss_block_t *block = (rt_sss_block_t *)block_ptr;
+
+    if (!q_strcasecmp(kb, "color"))
+    {
+        const char *hex = (vb[0] == '#') ? vb + 1 : vb;
+
+        if (!rt_mat_parse_hex_color(hex, block->color))
+            Con_DWarning("RT mat: material '%s': sss color '%s' is not rrggbb\n", dest->name, vb);
+    }
+    else if (!q_strcasecmp(kb, "polygon"))
+        block->poly_count = rt_mat_parse_polygon_uv(vb, block->poly_uv);
+    else if (!q_strcasecmp(kb, "threshold"))
+    {
+        block->threshold = CLAMP(0.0f, (float)atof(vb), 1.0f);
+        block->has_threshold = true;
+    }
+    else if (!q_strcasecmp(kb, "feather"))
+    {
+        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
+        block->has_feather = true;
+    }
+    else if (!q_strcasecmp(kb, "factor"))
+    {
+        block->factor = CLAMP(0.0f, (float)atof(vb), 2.0f);
+        block->has_factor = true;
+    }
+}
+
+static void rt_mat_parse_emissive_sequence(yaml_document_t *doc, yaml_node_t *mv, rt_material_t *dest)
+{
+    static const rt_mat_block_seq_ops_t ops = {
+        rt_mat_append_emissive_block_void,
+        rt_mat_parse_emissive_block_pair,
+        rt_mat_add_emissive_color_void,
+    };
+    rt_mat_parse_block_sequence(doc, mv, dest, &ops);
+}
+
+static void rt_mat_parse_sss_sequence(yaml_document_t *doc, yaml_node_t *mv, rt_material_t *dest)
+{
+    static const rt_mat_block_seq_ops_t ops = {
+        rt_mat_append_sss_block_void,
+        rt_mat_parse_sss_block_pair,
+        rt_mat_add_sss_color_void,
+    };
+    rt_mat_parse_block_sequence(doc, mv, dest, &ops);
+}
+
+static void rt_mat_finalize_blocks(rt_material_t *dest)
+{
+    for (int c = 0; c < dest->color_emissive_count; c++)
+    {
+        rt_emissive_t *block = &dest->color_emissive[c];
+
+        if (!block->has_threshold)
+            block->threshold = dest->color_emissive_threshold;
+        if (!block->has_feather)
+            block->feather = dest->color_emissive_feather;
+        if (!block->has_factor)
+            block->factor = dest->emissive_factor;
+        if (!block->has_blend)
+            block->blend = dest->emissive_blend;
+        block->has_threshold = block->has_feather = true;
+        block->has_factor = block->has_blend = true;
+    }
+
+    for (int c = 0; c < dest->sss_block_count; c++)
+    {
+        rt_sss_block_t *block = &dest->sss_blocks[c];
+
+        if (!block->has_threshold)
+            block->threshold = dest->sss_threshold;
+        if (!block->has_feather)
+            block->feather = dest->sss_feather;
+        if (!block->has_factor)
+            block->factor = 1.0f;
+        block->has_threshold = block->has_feather = block->has_factor = true;
+    }
+
+    if (!dest->has_sss_strength &&
+        (dest->filename_sss[0] != '\0' || (dest->has_sss_blocks && dest->sss_block_count > 0)))
+    {
+        dest->sss_strength = 1.0f;
+    }
+}
+
 static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name, rt_material_t *dest, int max_items)
 {
     if (!filebuf || len == 0)
@@ -870,117 +1248,10 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
 
                         if (mv->type == YAML_SEQUENCE_NODE)
                         {
-                            // a list value: only luma takes one, so
-                            // both "luma: ff0000,00ff00" and a YAML
-                            // list of colors author the same thing
                             if (!q_strcasecmp(keybuf, "luma") || !q_strcasecmp(keybuf, "color_emissive"))
-                            {
-                                for (yaml_node_item_t *sit = mv->data.sequence.items.start;
-                                     sit < mv->data.sequence.items.top; sit++)
-                                {
-                                    yaml_node_t *sitem = yaml_document_get_node(&document, *sit);
-                                    char valbuf[1024];
-
-                                    if (!sitem)
-                                        continue;
-
-                                    if (sitem->type == YAML_MAPPING_NODE)
-                                    {
-                                        // one block with its own tone controls:
-                                        //   - { color: ff0000, threshold: 0.02,
-                                        //       feather: 2, blend: screen }
-                                        rt_emissive_t *block = rt_mat_append_emissive_block(dest);
-
-                                        if (!block)
-                                            continue;
-
-                                        for (yaml_node_pair_t *bp = sitem->data.mapping.pairs.start;
-                                             bp < sitem->data.mapping.pairs.top; bp++)
-                                        {
-                                            yaml_node_t *bk = yaml_document_get_node(&document, bp->key);
-                                            yaml_node_t *bv = yaml_document_get_node(&document, bp->value);
-                                            char kb[64], vb[512];
-
-                                            if (!bk || !bv || bk->type != YAML_SCALAR_NODE ||
-                                                bv->type != YAML_SCALAR_NODE)
-                                                continue;
-                                            rt_mat_yaml_scalar(bk, kb, sizeof(kb));
-                                            rt_mat_yaml_scalar(bv, vb, sizeof(vb));
-
-                                            if (!q_strcasecmp(kb, "color"))
-                                            {
-                                                const char *hex = (vb[0] == '#') ? vb + 1 : vb;
-
-                                                if (!rt_mat_parse_hex_color(hex, block->color))
-                                                    Con_DWarning("RT mat: material '%s': color '%s' is not rrggbb; white is used\n",
-                                                                 dest->name, vb);
-                                            }
-                                            else if (!q_strcasecmp(kb, "polygon"))
-                                            {
-                                                const char *s = vb;
-
-                                                block->poly_count = 0;
-                                                while (*s && block->poly_count < RT_MAT_EMIS_POLY_MAX)
-                                                {
-                                                    char *end;
-                                                    float u, v;
-
-                                                    u = (float)strtod(s, &end);
-                                                    if (end == s)
-                                                        break;
-                                                    s = end;
-                                                    while (*s == ' ' || *s == '\t' || *s == ',')
-                                                        s++;
-                                                    v = (float)strtod(s, &end);
-                                                    if (end == s)
-                                                        break;
-                                                    s = end;
-                                                    block->poly_uv[block->poly_count][0] = CLAMP(0.0f, u, 1.0f);
-                                                    block->poly_uv[block->poly_count][1] = CLAMP(0.0f, v, 1.0f);
-                                                    block->poly_count++;
-                                                    while (*s == ' ' || *s == '\t')
-                                                        s++;
-                                                }
-                                                if (block->poly_count < 3)
-                                                    block->poly_count = 0;
-                                            }
-                                            else if (!q_strcasecmp(kb, "threshold"))
-                                            {
-                                                block->threshold = (float)atof(vb);
-                                                block->has_threshold = true;
-                                            }
-                                            else if (!q_strcasecmp(kb, "feather"))
-                                            {
-                                                block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
-                                                block->has_feather = true;
-                                            }
-                                            else if (!q_strcasecmp(kb, "emissive_factor") || !q_strcasecmp(kb, "factor"))
-                                            {
-                                                block->factor = (float)atof(vb);
-                                                block->has_factor = true;
-                                            }
-                                            else if (!q_strcasecmp(kb, "blend"))
-                                            {
-                                                const int v = rt_mat_parse_emissive_blend(vb);
-
-                                                if (v == -2)
-                                                    Con_DWarning("RT mat: material '%s': blend '%s' is not a mode; the material's is used\n",
-                                                                 dest->name, vb);
-                                                else
-                                                {
-                                                    block->blend = v;
-                                                    block->has_blend = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else if (sitem->type == YAML_SCALAR_NODE)
-                                    {
-                                        rt_mat_yaml_scalar(sitem, valbuf, sizeof(valbuf));
-                                        rt_mat_add_emissive_color(dest, valbuf);
-                                    }
-                                }
-                            }
+                                rt_mat_parse_emissive_sequence(&document, mv, dest);
+                            else if (!q_strcasecmp(keybuf, "sss"))
+                                rt_mat_parse_sss_sequence(&document, mv, dest);
                             continue;
                         }
                         if (mv->type != YAML_SCALAR_NODE)
@@ -1001,24 +1272,7 @@ static int rt_mat_parse_yaml(const char *filebuf, int len, const char *file_name
                         }
                     }
 
-                    // A block that carries no tone controls of its own inherits
-                    // the material-level ones (the old single-color keys), so
-                    // after loading every block is complete on its own.
-                    for (int c = 0; c < dest->color_emissive_count; c++)
-                    {
-                        rt_emissive_t *block = &dest->color_emissive[c];
-
-                        if (!block->has_threshold)
-                            block->threshold = dest->color_emissive_threshold;
-                        if (!block->has_feather)
-                            block->feather = dest->color_emissive_feather;
-                        if (!block->has_factor)
-                            block->factor = dest->emissive_factor;
-                        if (!block->has_blend)
-                            block->blend = dest->emissive_blend;
-                        block->has_threshold = block->has_feather = true;
-                        block->has_factor = block->has_blend = true;
-                    }
+                    rt_mat_finalize_blocks(dest);
 
                     if (have_name)
                     {

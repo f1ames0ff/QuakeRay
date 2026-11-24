@@ -131,6 +131,7 @@ extern "C" QrResult QRCONV QR_QuakeUploadGeometry(QrInstance instance,
     {
         converted.layerColors[2].data[1] *= QR_QUAKE_UNIT_IN_METERS;
     }
+    // Note: subsurfaceRadius on QR_GEOMETRY_UPLOAD_SUBSURFACE_BIT is authored directly in meters.
 
     if (uploadInfo->pVertices != nullptr && uploadInfo->vertexCount > 0)
     {
