@@ -3361,20 +3361,20 @@ void RT_EvalSunGroundTransmittance (const vec3_t sun_dir, vec3_t out_trans)
 		sky_peak > 1e-5f ? sky_color[2] / sky_peak : 1.0f,
 	};
 
-	const float earth_ext[3] = {5.8e-6f, 13.5e-6f, 33.1e-6f};
-	const float ozone_ext[3] = {0.45e-6f * ozone * density, 2.35e-6f * ozone * density, 0.11e-6f * ozone * density};
+	const float earth_ext[3] = {5.8e-6f, 12.2e-6f, 30.0e-6f};
+	const float ozone_ext[3] = {0.65e-6f * ozone * density, 1.88e-6f * ozone * density, 0.085e-6f * ozone * density};
 	const float mie_ext = 4.7e-6f * mie * density;
 	float ray_ext[3];
 	for (int c = 0; c < 3; c++)
 	{
-		const float custom = q_max (sky_norm[c], 0.08f) * 30.0e-6f;
-		ray_ext[c] = (earth_ext[c] + (custom - earth_ext[c]) * 0.35f) * density;
+		const float custom = q_max (sky_norm[c], 0.08f) * 26.0e-6f;
+		ray_ext[c] = (earth_ext[c] + (custom - earth_ext[c]) * 0.22f) * density;
 	}
 
 	const float planet_r = 6360000.0f;
 	const float top_r = 6440000.0f;
 	const float ro_z = planet_r + 10.0f;
-	const float rd_z = q_max (z, 0.004f);
+	const float rd_z = q_max (z, 0.022f);
 	const float rd_h = sqrtf (q_max (0.0f, 1.0f - rd_z * rd_z));
 	const float b = ro_z * rd_z;
 	const float c_term = ro_z * ro_z - top_r * top_r;
@@ -3393,10 +3393,20 @@ void RT_EvalSunGroundTransmittance (const vec3_t sun_dir, vec3_t out_trans)
 		od_o += q_max (0.0f, 1.0f - fabsf (h - 25000.0f) / 15000.0f) * step_len;
 	}
 
+	float direct_t[3];
 	for (int ch = 0; ch < 3; ch++)
 	{
 		const float tau = ray_ext[ch] * od_r + mie_ext * od_m + ozone_ext[ch] * od_o;
-		out_trans[ch] = smooth_horizon * expf (-tau);
+		direct_t[ch] = expf (-tau);
+	}
+	const float peak_t = q_max (q_max (direct_t[0], direct_t[1]), direct_t[2]);
+	const float grazing_t = q_min (q_max (q_max (z, 0.0f) / 0.18f, 0.0f), 1.0f);
+	const float grazing = 1.0f - grazing_t * grazing_t * (3.0f - 2.0f * grazing_t);
+	const float floor_val = peak_t * 0.36f;
+	for (int ch = 0; ch < 3; ch++)
+	{
+		const float ms = q_max (direct_t[ch], floor_val);
+		out_trans[ch] = smooth_horizon * (direct_t[ch] + (ms - direct_t[ch]) * (grazing * 0.42f));
 	}
 }
 
