@@ -408,7 +408,7 @@ static qboolean RT_ResolveSunLightState (float sun_gain, vec3_t upload_dir, vec3
 		const float phase_scale = phase >= 0.0f
 			? (0.18f + 0.82f * CLAMP (0.0f, phase, 1.0f))
 			: 0.7f;
-		const float moon_scale = eff_gain * 0.06f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
+		const float moon_scale = eff_gain * 0.006f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
 		                         phase_scale * q_min (1.0f, to_moon[2] * 5.0f);
 		RT_GetMoonColor (color);
 		VectorScale (color, moon_scale, color);

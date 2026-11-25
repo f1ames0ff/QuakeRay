@@ -4090,7 +4090,7 @@ static void GL_ResolveVolumetricSkySource (qboolean     usePhysicalSky,
 		const float phase_scale = phase >= 0.0f
 			? (0.18f + 0.82f * CLAMP (0.0f, phase, 1.0f))
 			: 0.7f;
-		const float moon_scale = 0.06f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
+		const float moon_scale = 0.006f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
 		                         phase_scale * q_min (1.0f, celestial_moon_dir[2] * 5.0f);
 		RT_GetMoonColor (volume_light_color);
 		VectorScale (volume_light_color, moon_scale, volume_light_color);
