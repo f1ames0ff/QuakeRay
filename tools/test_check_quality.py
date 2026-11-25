@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 f1ames0ff <f1am3sdev.github@protonmail.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+
 """Unit tests for diff-gated quality checks in QuakeRay."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -104,6 +123,29 @@ class CheckQualityTests(unittest.TestCase):
             cq.resolve_base_ref(repo_root, "--upload-pack=evil")
         with self.assertRaises(ValueError):
             cq.resolve_base_ref(repo_root, "HEAD..master")
+
+    def test_copyright_check_flags_and_clears_newly_added_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "-C", tmp, "init", "-q"], check=True)
+            subprocess.run(["git", "-C", tmp, "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", tmp, "config", "user.email", "test@example.com"], check=True)
+            (repo / "README.md").write_text("init\n", encoding="utf-8")
+            subprocess.run(["git", "-C", tmp, "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", "init"], check=True)
+
+            target = repo / "Quake/added.c"
+            target.parent.mkdir(parents=True)
+            target.write_text("int x = 1;\n", encoding="utf-8")
+
+            findings, _ = cq.run_copyright_check(repo, "HEAD", local=True)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].path, "Quake/added.c")
+            self.assertEqual(findings[0].rule, "missing-copyright")
+
+            cq.copyright_header.fix_files(repo, ["Quake/added.c"], year=2026)
+            findings_after, _ = cq.run_copyright_check(repo, "HEAD", local=True)
+            self.assertEqual(findings_after, [])
 
 
 if __name__ == "__main__":

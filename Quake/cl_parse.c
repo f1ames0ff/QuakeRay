@@ -1480,6 +1480,8 @@ static void CL_ParseStatic (int version) // johnfitz -- added a parameter
 	}
 
 	ent = cl.static_entities[i];
+	ent->rt_static_index = i + 1;
+	ent->rt_static_alias_gen = 0;
 	cl.num_statics++;
 	CL_ParseBaseline (ent, version); // johnfitz -- added second parameter
 

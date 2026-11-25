@@ -17,6 +17,11 @@ import subprocess
 import sys
 import tempfile
 
+_TOOLS_DIR = str(Path(__file__).resolve().parent)
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+import copyright_header  # noqa: E402
+
 DEFAULT_BASE = "origin/master"
 EXCLUDE_PREFIXES = (
     "third_party/",
@@ -643,6 +648,27 @@ def run_ruff_check(
     return findings, [f"ruff: checked {len(py_files)} file(s) -> {len(findings)} finding(s)"]
 
 
+def run_copyright_check(
+    repo_root: Path,
+    base_ref: str,
+    local: bool,
+) -> tuple[list[Finding], list[str]]:
+    added = copyright_header.collect_added_files(repo_root, base_ref, local)
+    missing = copyright_header.find_missing_copyright_files(repo_root, added)
+    findings = [
+        Finding(
+            "copyright",
+            rel,
+            1,
+            "error",
+            "missing-copyright",
+            "newly added file is missing a GPL v2+ copyright header (run tools/copyright_header.py --fix)",
+        )
+        for rel in missing
+    ]
+    return findings, [f"copyright: checked {len(added)} added file(s) -> {len(findings)} finding(s)"]
+
+
 def run_shader_check(repo_root: Path) -> tuple[list[Finding], list[str]]:
     shader_dir = repo_root / "renderer/Source/Shaders"
     matrix_script = shader_dir / "CheckMatrixReads.py"
@@ -670,13 +696,52 @@ def format_finding(f: Finding) -> str:
     return f"{prefix}[{f.tool}] {f.path}:{f.line} ({f.rule}): {f.message}"
 
 
+def _run_diff_checks(
+    repo_root: Path,
+    safe_base: str,
+    args: argparse.Namespace,
+    compile_db: Path | None,
+    skipped: set[str],
+) -> tuple[list[Finding], list[str]]:
+    all_findings: list[Finding] = []
+    summaries: list[str] = []
+
+    if "copyright" in skipped:
+        summaries.append("copyright: skipped by --skip")
+    else:
+        found, msgs = run_copyright_check(repo_root, safe_base, args.local)
+        all_findings.extend(found)
+        summaries.extend(msgs)
+
+    changed_lines = collect_changed_lines(repo_root, safe_base, args.local)
+    if not changed_lines:
+        summaries.append("diff: no changed non-excluded source files")
+        return all_findings, summaries
+
+    limits = QualityLimits(args.ccn_max, args.nloc_max, args.params_max)
+    checks = [
+        ("clang-tidy", lambda: run_clang_tidy_check(repo_root, changed_lines, compile_db, args.strict_tools)),
+        ("cppcheck", lambda: run_cppcheck_check(repo_root, changed_lines, compile_db, args.strict_tools)),
+        ("lizard", lambda: run_lizard_check(repo_root, changed_lines, safe_base, args.local, limits, args.strict_tools)),
+        ("ruff", lambda: run_ruff_check(repo_root, changed_lines, args.strict_tools)),
+    ]
+    for name, runner in checks:
+        if name in skipped:
+            summaries.append(f"{name}: skipped by --skip")
+            continue
+        found, msgs = runner()
+        all_findings.extend(found)
+        summaries.extend(msgs)
+    return all_findings, summaries
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run diff-gated quality checks for QuakeRay.")
     parser.add_argument("--base", default=DEFAULT_BASE, help="Git base ref for PR diff comparison")
     parser.add_argument("--local", action="store_true", help="Check uncommitted local workspace changes instead of git diff base...HEAD")
     parser.add_argument("--compile-commands", type=Path, default=None, help="Path to CMake compile_commands.json")
     parser.add_argument("--strict-tools", action="store_true", help="Fail if any configured analysis tool or compile DB is missing")
-    parser.add_argument("--skip", default="", help="Comma-separated checks to skip (clang-tidy,cppcheck,lizard,ruff,shaders)")
+    parser.add_argument("--skip", default="", help="Comma-separated checks to skip (copyright,clang-tidy,cppcheck,lizard,ruff,shaders)")
     parser.add_argument("--shaders", action="store_true", help="Run HLSL matrix read & DXC build checks")
     parser.add_argument("--ccn-max", type=int, default=15, help="Maximum cyclomatic complexity for new/edited functions")
     parser.add_argument("--nloc-max", type=int, default=120, help="Maximum function NLOC for new/edited functions")
@@ -695,27 +760,7 @@ def main(argv: list[str] | None = None) -> int:
     if compile_db is None and (repo_root / "build/quality/compile_commands.json").is_file():
         compile_db = repo_root / "build/quality/compile_commands.json"
 
-    changed_lines = collect_changed_lines(repo_root, safe_base, args.local)
-    all_findings: list[Finding] = []
-    summaries: list[str] = []
-
-    if changed_lines:
-        limits = QualityLimits(args.ccn_max, args.nloc_max, args.params_max)
-        checks = [
-            ("clang-tidy", lambda: run_clang_tidy_check(repo_root, changed_lines, compile_db, args.strict_tools)),
-            ("cppcheck", lambda: run_cppcheck_check(repo_root, changed_lines, compile_db, args.strict_tools)),
-            ("lizard", lambda: run_lizard_check(repo_root, changed_lines, safe_base, args.local, limits, args.strict_tools)),
-            ("ruff", lambda: run_ruff_check(repo_root, changed_lines, args.strict_tools)),
-        ]
-        for name, runner in checks:
-            if name in skipped:
-                summaries.append(f"{name}: skipped by --skip")
-                continue
-            found, msgs = runner()
-            all_findings.extend(found)
-            summaries.extend(msgs)
-    else:
-        summaries.append("diff: no changed non-excluded source files")
+    all_findings, summaries = _run_diff_checks(repo_root, safe_base, args, compile_db, skipped)
 
     if args.shaders and "shaders" not in skipped:
         found, msgs = run_shader_check(repo_root)
