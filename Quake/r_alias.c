@@ -1066,7 +1066,7 @@ typedef struct
 	int             skinnum;
 	int             pose1;
 	byte            alpha;
-	unsigned int    effects;
+	int             effects;
 	vec3_t          origin;
 	vec3_t          angles;
 	double          settled_since;
@@ -1227,13 +1227,18 @@ static qboolean RT_StaticAliasTrackReady (const rt_alias_track_t *tr)
 	return (cl.time - tr->settled_since) >= RT_STATIC_ALIAS_SETTLE_SECONDS;
 }
 
+static qboolean RT_StaticAliasVec3Equal (const vec3_t a, const vec3_t b)
+{
+	return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+}
+
 static qboolean RT_StaticAliasEntryUnchanged (const entity_t *e, const rt_alias_track_t *tr, int pose1)
 {
 	if (e->model != tr->model || e->frame != tr->frame || e->skinnum != tr->skinnum || pose1 != tr->pose1)
 		return false;
 	if (e->alpha != tr->alpha || e->effects != tr->effects)
 		return false;
-	return VectorCompare (e->origin, tr->origin) && VectorCompare (e->angles, tr->angles);
+	return RT_StaticAliasVec3Equal (e->origin, tr->origin) && RT_StaticAliasVec3Equal (e->angles, tr->angles);
 }
 
 static qboolean RT_StaticAliasSyncTrackVisibility (void)
@@ -1482,8 +1487,8 @@ static void RT_StaticAliasUploadOne (entity_t *e, int unique_index)
 	const qboolean is_glass = tx->rtglass;
 
 	lerpdata_t lerpdata = {0};
-	lerpdata.pose1 = pose1;
-	lerpdata.pose2 = pose1;
+	lerpdata.pose1 = (short)pose1;
+	lerpdata.pose2 = (short)pose1;
 	VectorCopy (e->origin, lerpdata.origin);
 	VectorCopy (e->angles, lerpdata.angles);
 
