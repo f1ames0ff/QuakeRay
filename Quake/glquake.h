@@ -682,6 +682,13 @@ void RT_StaticMovableUpload (cb_context_t *cbx);
 void RT_StaticMovableUpdate (void);
 void RT_StaticMovableClear (void);
 
+qboolean RT_AliasTextureCanEmitLight (gltexture_t *tex);
+void     RT_StaticAliasClear (void);
+qboolean RT_StaticAliasNeedsSubmit (void);
+void     RT_StaticAliasPrepare (void);
+void     RT_StaticAliasUpload (void);
+qboolean RT_StaticAliasCovers (const entity_t *e);
+
 QrFloat3D RT_AnglesToDir (/* const */ vec3_t angles);
 float     RT_Luminance (const vec3_t color);
 

@@ -862,6 +862,8 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, qboolean alphapass, int chain, int
 		switch (currententity->model->type)
 		{
 		case mod_alias:
+			if (RT_StaticAliasCovers (currententity))
+				continue;
 			R_DrawAliasModel (cbx, currententity, entuniqueid);
 			RT_Prof_End (RT_PROF_ENTS_ALIAS, prof_entity);
 			break;
@@ -1178,6 +1180,7 @@ void R_DrawWorldTask (void *unused)
 	R_DrawWorld (cbx);
 
 	RT_StaticMovableUpload (cbx);
+	RT_StaticAliasUpload ();
 
 	r = qrSubmitStaticGeometries (vulkan_globals.instance);
 	QR_CHECK (r);
@@ -1376,8 +1379,14 @@ void R_RenderView (task_handle_t begin_rendering_task, task_handle_t setup_frame
 	// four upload sites fill it as they go.
 	RT_TRACK_BeginFrame ();
 
+	if (RT_StaticAliasNeedsSubmit ())
+		Atomic_StoreUInt32 (&rt_require_static_submit, true);
+
 	if (Atomic_LoadUInt32 (&rt_require_static_submit) != 0)
+	{
 		RT_StaticMovablePrepare ();
+		RT_StaticAliasPrepare ();
+	}
 
 	time1 = Sys_DoubleTime ();
 

@@ -435,6 +435,7 @@ void R_NewMap (void)
 	RT_WorldCensus ();
 	RT_UploadWorldLights ();
 	RT_StaticMovableClear ();
+	RT_StaticAliasClear ();
 	// RT: submit world geometry once
 	{
 		Atomic_StoreUInt32 (&rt_require_static_submit, true);
@@ -574,6 +575,11 @@ int RT_GetEntityUniqueId (const entity_t *ent)
 
 	if (ent >= cl_temp_entities && ent < cl_temp_entities + MAX_TEMP_ENTITIES)
 		return cl.num_statics + cl.max_edicts + (int)(ent - cl_temp_entities);
+
+	if (ent->rt_static_index > 0 && cl.static_entities &&
+	    ent->rt_static_index <= cl.num_statics &&
+	    cl.static_entities[ent->rt_static_index - 1] == ent)
+		return ent->rt_static_index - 1;
 
 	if (cl.static_entities)
 	{

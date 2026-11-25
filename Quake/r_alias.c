@@ -29,9 +29,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern cvar_t r_lerpmodels, r_lerpmove; // johnfitz
 extern cvar_t scr_fov;
 
-extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs;
+extern cvar_t rt_model_rough, rt_model_metal, rt_enable_pvs, rt_alias_persistent;
 extern cvar_t rt_viewm_fovscale, rt_viewm_wide, rt_viewm_scale, rt_viewm_normalize;
 extern cvar_t rt_upload_trace;
+
+static uint32_t RT_AliasClusterOverride (int cluster)
+{
+	return cluster > 0 ? (uint32_t)cluster : 0u;
+}
 
 atomic_uint32_t rs_alias_enhanced_draws;
 atomic_uint32_t rs_alias_pose_draws, rs_alias_pose_static, rs_alias_pose_repeat;
@@ -468,7 +473,7 @@ static void GL_DrawAliasFrame(
            since the previous draw of the same entity. */
 
         static THREAD_LOCAL rt_alias_posecache_t stride_posecache[RT_ALIAS_POSECACHE_SIZE];
-        const qboolean pose_static = (blend < FLT_EPSILON && cluster <= 0);
+        const qboolean pose_static = (blend < FLT_EPSILON);
         const size_t   slot = ((size_t)e / sizeof (void *)) & (RT_ALIAS_POSECACHE_SIZE - 1);
         rt_alias_posecache_t *ce = &stride_posecache[slot];
         const qboolean repeat = pose_static && ce->was_static && ce->ent == e && ce->model == e->model && ce->pose1 == lerpdata.pose1;
@@ -599,7 +604,7 @@ else
 		        isviewer ? QR_GEOMETRY_VISIBILITY_TYPE_FIRST_PERSON_VIEWER :
 		        QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
 			.vertexCount = paliashdr->numverts_vbo,
-			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster),
+			.pVertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, 0),
 			.indexCount = paliashdr->numindexes,
 			.pIndices = e->model->rtindices,
 			.layerColors = {RT_COLOR_WHITE, {is_glass && tx ? tx->rtglasscolor[0] : 0.0f, is_glass && tx ? tx->rtglasscolor[1] : 0.0f, is_glass && tx ? tx->rtglasscolor[2] : 0.0f, 0.0f},
@@ -613,6 +618,7 @@ else
 			.defaultMetallicity = CVAR_TO_FLOAT(rt_model_metal),
 			.defaultEmission = 0,
 			.transform = transform,
+			.clusterOverride = RT_AliasClusterOverride (cluster),
 		};
 
 		TexMgr_FillSubsurfaceUpload (tx, &info);
@@ -658,7 +664,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 
 	blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0;
 	int cluster = RT_ResolvePointCluster (lerpdata.origin);
-	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, cluster);
+	vertices = GetPoseVertices (e->model, paliashdr, lerpdata.pose1, lerpdata.pose2, blend, 0);
 	transform = RT_GetAliasModelTransform (paliashdr, &lerpdata, isfirstperson, e->model);
 
 	if (isfirstperson)
@@ -785,6 +791,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
 				.defaultEmission = 0,
 				.transform = transform,
+				.clusterOverride = RT_AliasClusterOverride (cluster),
 			};
 
 			TexMgr_FillSubsurfaceUpload (tx, &info);
@@ -1045,4 +1052,508 @@ R_DrawAliasModel_ShowTris -- johnfitz
 */
 void R_DrawAliasModel_ShowTris(cb_context_t* cbx, entity_t* e)
 {
+}
+
+#define RT_STATIC_ALIAS_MAX_GEOMS 4096
+#define RT_STATIC_ALIAS_SETTLE_FRAMES 30
+#define RT_STATIC_ALIAS_SETTLE_SECONDS 1.5
+#define RT_STATIC_ALIAS_EDICT_MIN_PROMOTE 64
+
+typedef struct
+{
+	const qmodel_t *model;
+	int             frame;
+	int             skinnum;
+	int             pose1;
+	byte            alpha;
+	int             effects;
+	vec3_t          origin;
+	vec3_t          angles;
+	double          settled_since;
+	uint32_t        vis_gen;
+	uint16_t        settled_frames;
+	qboolean        never_promote;
+	qboolean        promoted;
+	qboolean        eligible;
+} rt_alias_track_t;
+
+static uint32_t          rt_static_alias_generation = 1u;
+static int               rt_static_alias_num_statics = -1;
+static qboolean          rt_static_alias_drawentities = false;
+static qboolean          rt_static_alias_lightmap = false;
+static double            rt_static_alias_last_cl_time = 0.0;
+static uint32_t          rt_alias_vis_gen = 1u;
+static rt_alias_track_t *rt_alias_track = NULL;
+static int               rt_alias_track_cap = 0;
+static int               rt_alias_track_count = 0;
+
+static void RT_StaticAliasZeroTrackRange (rt_alias_track_t *tracks, int count)
+{
+	static const rt_alias_track_t empty_track = {0};
+
+	for (int i = 0; i < count; i++)
+		tracks[i] = empty_track;
+}
+
+static void RT_StaticAliasResetTracking (void)
+{
+	if (rt_alias_track && rt_alias_track_count > 0)
+	{
+		for (int i = 1; i < rt_alias_track_count && i < cl.num_entities; i++)
+			cl.entities[i].rt_static_alias_gen = 0u;
+		RT_StaticAliasZeroTrackRange (rt_alias_track, rt_alias_track_cap);
+	}
+	rt_alias_track_count = 0;
+	rt_static_alias_last_cl_time = 0.0;
+}
+
+void RT_StaticAliasClear (void)
+{
+	if (++rt_static_alias_generation == 0u)
+		rt_static_alias_generation = 1u;
+	rt_static_alias_num_statics = -1;
+	RT_StaticAliasResetTracking ();
+}
+
+static qboolean RT_StaticAliasIsEntityValid (const entity_t *e)
+{
+	if (!e || !e->model || e->model->type != mod_alias || e->model->needload)
+		return false;
+	if (!e->model->rtvertices || !e->model->rtindices)
+		return false;
+	if (e->eflags & EFLAGS_EXTERIORMODEL)
+		return false;
+	if (ENTALPHA_DECODE (e->alpha) < 1.0f)
+		return false;
+	if ((e->effects & (EF_BRIGHTFIELD | EF_MUZZLEFLASH | EF_DIMLIGHT | EF_BRIGHTLIGHT)) != 0)
+		return false;
+	return (((e->effects >> 24) | e->model->flags) & EF_ROTATE) == 0;
+}
+
+static qboolean RT_StaticAliasIsLerpSettled (const entity_t *e, int posenum)
+{
+	if (e->lerpflags & (LERP_RESETANIM | LERP_RESETANIM2 | LERP_RESETMOVE))
+		return false;
+	if (r_lerpmodels.value && !(e->model->flags & MOD_NOLERP && r_lerpmodels.value != 2))
+	{
+		double dur = (e->lerpflags & LERP_FINISH) ? (e->lerpfinish - e->lerpstart) : 0.1;
+		if (e->currentpose != posenum || e->previouspose != posenum || cl.time < e->lerpstart + dur)
+			return false;
+	}
+	if (r_lerpmove.value && (e->lerpflags & LERP_MOVESTEP))
+	{
+		double dur = (e->lerpflags & LERP_FINISH) ? (e->lerpfinish - e->lerpstart) : 0.1;
+		if (cl.time < e->movelerpstart + dur)
+			return false;
+	}
+	return true;
+}
+
+static gltexture_t *RT_StaticAliasFindStaticSkin (int unique_index, const aliashdr_t *hdr, int skinnum)
+{
+	int resolved_skin = (skinnum < 0 || skinnum >= hdr->numskins) ? 0 : skinnum;
+	gltexture_t *tx = hdr->gltextures[resolved_skin][0];
+	if (!tx)
+		return NULL;
+	for (int k = 1; k < 4; k++)
+	{
+		if (hdr->gltextures[resolved_skin][k] != tx)
+			return NULL;
+	}
+
+	const uint64_t unique_id = RT_GetAliasModelUniqueId (unique_index);
+	rt_light_t    *light_ov = RT_LIGHT_FindEmitter (tx->name, unique_id);
+	if (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize))
+		return NULL;
+	if (tx->rtislight || tx->rthaslightcolor || light_ov != NULL || RT_AliasTextureCanEmitLight (tx))
+		return NULL;
+
+	return tx;
+}
+
+/* Extracts static-promotion properties for an opaque, non-animated, non-emissive alias entity. */
+static qboolean RT_StaticAliasExtractProps (int unique_index, const entity_t *e, aliashdr_t **out_hdr,
+                                            int *out_pose1, gltexture_t **out_tx, qboolean check_lerp_settled)
+{
+	if (!RT_StaticAliasIsEntityValid (e))
+		return false;
+
+	aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
+	if (!hdr || hdr->poseverttype != PV_QUAKE1 || hdr->numverts_vbo <= 0 || hdr->numindexes < 3)
+		return false;
+
+	int frame = e->frame;
+	if (frame < 0 || frame >= hdr->numframes || hdr->frames[frame].numposes != 1)
+		return false;
+
+	int posenum = hdr->frames[frame].firstpose;
+	if (check_lerp_settled && !RT_StaticAliasIsLerpSettled (e, posenum))
+		return false;
+
+	gltexture_t *tx = RT_StaticAliasFindStaticSkin (unique_index, hdr, e->skinnum);
+	if (!tx)
+		return false;
+
+	*out_hdr = hdr;
+	*out_pose1 = posenum;
+	*out_tx = tx;
+	return true;
+}
+
+static void RT_StaticAliasEnsureTrackCapacity (int count)
+{
+	if (count <= rt_alias_track_cap)
+		return;
+
+	int new_cap = rt_alias_track_cap > 0 ? rt_alias_track_cap : 256;
+	while (new_cap < count)
+		new_cap *= 2;
+
+	rt_alias_track_t *grown = (rt_alias_track_t *)Mem_Realloc (rt_alias_track, sizeof (*rt_alias_track) * (size_t)new_cap);
+	if (!grown)
+		return;
+
+	RT_StaticAliasZeroTrackRange (grown + rt_alias_track_cap, new_cap - rt_alias_track_cap);
+	rt_alias_track = grown;
+	rt_alias_track_cap = new_cap;
+}
+
+static qboolean RT_StaticAliasTrackReady (const rt_alias_track_t *tr)
+{
+	if (tr->never_promote || !tr->eligible)
+		return false;
+	if (tr->settled_frames < RT_STATIC_ALIAS_SETTLE_FRAMES)
+		return false;
+	return (cl.time - tr->settled_since) >= RT_STATIC_ALIAS_SETTLE_SECONDS;
+}
+
+static qboolean RT_StaticAliasVec3Equal (const vec3_t a, const vec3_t b)
+{
+	return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+}
+
+static qboolean RT_StaticAliasEntryUnchanged (const entity_t *e, const rt_alias_track_t *tr, int pose1)
+{
+	if (e->model != tr->model || e->frame != tr->frame || e->skinnum != tr->skinnum || pose1 != tr->pose1)
+		return false;
+	if (e->alpha != tr->alpha || e->effects != tr->effects)
+		return false;
+	return RT_StaticAliasVec3Equal (e->origin, tr->origin) && RT_StaticAliasVec3Equal (e->angles, tr->angles);
+}
+
+static qboolean RT_StaticAliasSyncTrackVisibility (void)
+{
+	if (cl.time < rt_static_alias_last_cl_time)
+		RT_StaticAliasResetTracking ();
+	rt_static_alias_last_cl_time = cl.time;
+
+	RT_StaticAliasEnsureTrackCapacity (cl.num_entities);
+	if (!rt_alias_track)
+		return false;
+
+	if (cl.num_entities > rt_alias_track_count)
+	{
+		const int clear_count = q_min (cl.num_entities, rt_alias_track_cap) - rt_alias_track_count;
+		if (clear_count > 0)
+			RT_StaticAliasZeroTrackRange (rt_alias_track + rt_alias_track_count, clear_count);
+		rt_alias_track_count = q_min (cl.num_entities, rt_alias_track_cap);
+	}
+
+	if (++rt_alias_vis_gen == 0u)
+	{
+		rt_alias_vis_gen = 1u;
+		for (int i = 0; i < rt_alias_track_count; i++)
+			rt_alias_track[i].vis_gen = 0u;
+	}
+
+	for (int k = 0; k < cl_numvisedicts; k++)
+	{
+		entity_t *ve = cl_visedicts[k];
+		if (ve >= cl.entities + 1 && ve < cl.entities + rt_alias_track_count)
+			rt_alias_track[ve - cl.entities].vis_gen = rt_alias_vis_gen;
+	}
+
+	return true;
+}
+
+static void RT_StaticAliasRecordTrackPose (entity_t *e, rt_alias_track_t *tr, int pose1)
+{
+	tr->model = e->model;
+	tr->frame = e->frame;
+	tr->skinnum = e->skinnum;
+	tr->pose1 = pose1;
+	tr->alpha = e->alpha;
+	tr->effects = e->effects;
+	VectorCopy (e->origin, tr->origin);
+	VectorCopy (e->angles, tr->angles);
+	tr->settled_since = cl.time;
+	tr->settled_frames = 1u;
+}
+
+static void RT_StaticAliasUpdateTrackEntry (int idx, qboolean *out_demoted, int *out_ready)
+{
+	entity_t         *e = &cl.entities[idx];
+	rt_alias_track_t *tr = &rt_alias_track[idx];
+
+	const qboolean skip_edict = (idx == cl.viewentity || idx <= cl.maxclients);
+	const qboolean in_vis = (!skip_edict && tr->vis_gen == rt_alias_vis_gen);
+
+	aliashdr_t    *hdr = NULL;
+	gltexture_t   *tx = NULL;
+	int            pose1 = 0;
+	const qboolean eligible = in_vis && RT_StaticAliasExtractProps (cl.num_statics + idx, e, &hdr, &pose1, &tx, true);
+
+	if (tr->promoted)
+	{
+		if (!eligible || !RT_StaticAliasEntryUnchanged (e, tr, pose1))
+		{
+			tr->promoted = false;
+			tr->eligible = false;
+			tr->never_promote = true;
+			tr->settled_frames = 0u;
+			tr->model = NULL;
+			e->rt_static_alias_gen = 0u;
+			*out_demoted = true;
+		}
+		return;
+	}
+
+	tr->eligible = eligible;
+	if (tr->never_promote || !eligible)
+	{
+		tr->settled_frames = 0u;
+		tr->model = NULL;
+		return;
+	}
+
+	if (RT_StaticAliasEntryUnchanged (e, tr, pose1))
+	{
+		if (tr->settled_frames < 255u)
+			tr->settled_frames++;
+		if (RT_StaticAliasTrackReady (tr))
+			(*out_ready)++;
+	}
+	else
+	{
+		RT_StaticAliasRecordTrackPose (e, tr, pose1);
+	}
+}
+
+qboolean RT_StaticAliasNeedsSubmit (void)
+{
+	if (!CVAR_TO_BOOL (rt_alias_persistent))
+		return false;
+
+	const qboolean drawentities = CVAR_TO_BOOL (r_drawentities);
+	if (cl.num_statics != rt_static_alias_num_statics ||
+	    drawentities != rt_static_alias_drawentities ||
+	    r_lightmap_cheatsafe != rt_static_alias_lightmap)
+		return true;
+
+	if (!drawentities || r_lightmap_cheatsafe || !cl.entities || cl.num_entities <= 1)
+		return false;
+
+	if (!RT_StaticAliasSyncTrackVisibility ())
+		return false;
+
+	qboolean demoted = false;
+	int      ready_to_promote = 0;
+	for (int i = 1; i < rt_alias_track_count; i++)
+		RT_StaticAliasUpdateTrackEntry (i, &demoted, &ready_to_promote);
+
+	if (demoted)
+		return true;
+
+	/* Only pay a static world rebuild for edict promotion when a substantial batch of
+	   stationary props has settled (e.g. AD misc_model maps); avoid promoting handfuls of
+	   monsters or triggers on small maps. */
+	return ready_to_promote >= RT_STATIC_ALIAS_EDICT_MIN_PROMOTE;
+}
+
+qboolean RT_StaticAliasCovers (const entity_t *e)
+{
+	return e != NULL &&
+	       e->rt_static_alias_gen != 0u &&
+	       e->rt_static_alias_gen == rt_static_alias_generation &&
+	       CVAR_TO_BOOL (rt_alias_persistent);
+}
+
+static void RT_StaticAliasPrepareStatics (int *io_covered)
+{
+	if (!cl.static_entities || cl.num_statics <= 0)
+		return;
+
+	for (int i = 0; i < cl.num_statics && *io_covered < RT_STATIC_ALIAS_MAX_GEOMS; i++)
+	{
+		entity_t    *e = cl.static_entities[i];
+		aliashdr_t  *hdr = NULL;
+		gltexture_t *tx = NULL;
+		int          pose1 = 0;
+		if (!RT_StaticAliasExtractProps (i, e, &hdr, &pose1, &tx, false))
+			continue;
+
+		e->rt_static_alias_gen = rt_static_alias_generation;
+		(*io_covered)++;
+	}
+}
+
+static void RT_StaticAliasPromoteEdicts (int *io_covered)
+{
+	if (!rt_alias_track || !cl.entities)
+		return;
+
+	const int limit = q_min (rt_alias_track_count, cl.num_entities);
+	int       edict_ready = 0;
+
+	for (int i = 1; i < limit; i++)
+	{
+		if (RT_StaticAliasTrackReady (&rt_alias_track[i]))
+			edict_ready++;
+	}
+
+	if (edict_ready < RT_STATIC_ALIAS_EDICT_MIN_PROMOTE)
+		return;
+
+	for (int i = 1; i < limit && *io_covered < RT_STATIC_ALIAS_MAX_GEOMS; i++)
+	{
+		rt_alias_track_t *tr = &rt_alias_track[i];
+		if (!RT_StaticAliasTrackReady (tr))
+			continue;
+
+		cl.entities[i].rt_static_alias_gen = rt_static_alias_generation;
+		tr->promoted = true;
+		(*io_covered)++;
+	}
+}
+
+void RT_StaticAliasPrepare (void)
+{
+	if (++rt_static_alias_generation == 0u)
+		rt_static_alias_generation = 1u;
+
+	rt_static_alias_num_statics = cl.num_statics;
+	rt_static_alias_drawentities = CVAR_TO_BOOL (r_drawentities);
+	rt_static_alias_lightmap = r_lightmap_cheatsafe;
+
+	for (int i = 0; i < rt_alias_track_count; i++)
+		rt_alias_track[i].promoted = false;
+
+	if (!CVAR_TO_BOOL (rt_alias_persistent) || !rt_static_alias_drawentities || rt_static_alias_lightmap)
+		return;
+
+	int covered = 0;
+	RT_StaticAliasPrepareStatics (&covered);
+	RT_StaticAliasPromoteEdicts (&covered);
+}
+
+static QrGeometryPassThroughType RT_StaticAliasPassThroughType (qboolean is_glass, qboolean is_watermat, qboolean alphatest)
+{
+	if (is_glass)
+		return QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT;
+	if (is_watermat)
+		return QR_GEOMETRY_PASS_THROUGH_TYPE_WATER_REFLECT_REFRACT;
+	if (alphatest)
+		return QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED;
+	return QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE;
+}
+
+static uint32_t RT_StaticAliasUploadFlags (const gltexture_t *tx, qboolean is_glass, qboolean alphatest)
+{
+	uint32_t flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT;
+	if (!tx)
+		return flags;
+	if (tx->rtalphatest)
+		flags |= QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT;
+	if (is_glass && alphatest)
+		flags |= QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT;
+	if (tx->rtuvscale[0] != 1.0f || tx->rtuvscale[1] != 1.0f ||
+	    tx->rtuvoffset[0] != 0.0f || tx->rtuvoffset[1] != 0.0f)
+		flags |= QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT;
+	if (tx->rtexactnormals)
+		flags = (flags & ~QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT) | QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT;
+	return flags;
+}
+
+static void RT_StaticAliasUploadOne (entity_t *e, int unique_index)
+{
+	aliashdr_t  *hdr = NULL;
+	gltexture_t *tx = NULL;
+	int          pose1 = 0;
+	if (!RT_StaticAliasExtractProps (unique_index, e, &hdr, &pose1, &tx, false))
+		return;
+
+	const uint64_t unique_id = RT_GetAliasModelUniqueId (unique_index);
+	const qboolean alphatest = !!(e->model->flags & MF_HOLEY) || tx->rtalphatest;
+	const qboolean is_glass = tx->rtglass;
+
+	lerpdata_t lerpdata = {0};
+	lerpdata.pose1 = (short)pose1;
+	lerpdata.pose2 = (short)pose1;
+	VectorCopy (e->origin, lerpdata.origin);
+	VectorCopy (e->angles, lerpdata.angles);
+
+	const int         cluster = RT_ResolvePointCluster (e->origin);
+	const QrTransform transform = RT_GetAliasModelTransform (hdr, &lerpdata, false, e->model);
+	const QrVertex   *vertices = GetModelVerticesForPose (e->model, hdr, pose1);
+
+	QrGeometryUploadInfo info = {
+		.uniqueID = unique_id,
+		.flags = RT_StaticAliasUploadFlags (tx, is_glass, alphatest),
+		.geomType = QR_GEOMETRY_TYPE_STATIC,
+		.passThroughType = RT_StaticAliasPassThroughType (is_glass, tx->rtwater, alphatest),
+		.visibilityType = QR_GEOMETRY_VISIBILITY_TYPE_WORLD_0,
+		.vertexCount = hdr->numverts_vbo,
+		.pVertices = vertices,
+		.indexCount = hdr->numindexes,
+		.pIndices = e->model->rtindices,
+		.layerColors = {RT_COLOR_WHITE},
+		.layerBlendingTypes = {QR_GEOMETRY_MATERIAL_BLEND_TYPE_OPAQUE},
+		.texCoordScale = {tx->rtuvscale[0], tx->rtuvscale[1]},
+		.texCoordOffset = {tx->rtuvoffset[0], tx->rtuvoffset[1]},
+		.geomMaterial = {tx->rtmaterial, is_glass ? tx->rtoverlaymaterial : QR_NO_MATERIAL},
+		.defaultRoughness = CVAR_TO_FLOAT (rt_model_rough),
+		.defaultMetallicity = CVAR_TO_FLOAT (rt_model_metal),
+		.defaultEmission = 0,
+		.transform = transform,
+		.clusterOverride = RT_AliasClusterOverride (cluster),
+	};
+
+	if (is_glass)
+	{
+		VectorCopy (tx->rtglasscolor, info.layerColors[1].data);
+		info.layerColors[2].data[0] = tx->rtglassior;
+		info.layerColors[2].data[1] = tx->rtglassthickness;
+	}
+
+	TexMgr_FillSubsurfaceUpload (tx, &info);
+
+	QrResult r = qrUploadGeometry (vulkan_globals.instance, &info);
+	QR_CHECK (r);
+}
+
+void RT_StaticAliasUpload (void)
+{
+	if (!CVAR_TO_BOOL (rt_alias_persistent) || !rt_static_alias_drawentities || rt_static_alias_lightmap)
+		return;
+
+	if (cl.static_entities && cl.num_statics > 0)
+	{
+		for (int i = 0; i < cl.num_statics; i++)
+		{
+			entity_t *e = cl.static_entities[i];
+			if (e && e->rt_static_alias_gen == rt_static_alias_generation)
+				RT_StaticAliasUploadOne (e, i);
+		}
+	}
+
+	if (cl.entities && cl.num_entities > 1)
+	{
+		const int limit = q_min (rt_alias_track_count, cl.num_entities);
+		for (int i = 1; i < limit; i++)
+		{
+			entity_t *e = &cl.entities[i];
+			if (e->rt_static_alias_gen == rt_static_alias_generation)
+				RT_StaticAliasUploadOne (e, cl.num_statics + i);
+		}
+	}
 }
