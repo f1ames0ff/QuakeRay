@@ -1151,6 +1151,8 @@ typedef struct rt_movable_model_s
 	uint64_t                  *batchUniqueIDs;
 	vec3_t                     lastOrigin;
 	vec3_t                     lastAngles;
+	QrTransform                lastTransform;
+	qboolean                   hidden;
 } rt_movable_model_t;
 
 static rt_movable_model_t *rt_movable_models;
@@ -1245,6 +1247,8 @@ void RT_StaticMovablePrepare (void)
 		entry->ownerIndex = ownerIndex;
 		VectorCopy (cl.entities[ownerIndex].origin, entry->lastOrigin);
 		VectorCopy (cl.entities[ownerIndex].angles, entry->lastAngles);
+		entry->lastTransform = RT_GetBrushModelMatrix (&cl.entities[ownerIndex]);
+		entry->hidden = false;
 		entry->next = rt_movable_models;
 		rt_movable_models = entry;
 		model->rt_movable = entry;
@@ -1283,6 +1287,10 @@ void RT_StaticMovableUpload (cb_context_t *cbx)
 
 		rt_movable_upload_entry = entry;
 		entry->numBatches = 0;
+		entry->hidden = false;
+		VectorCopy (owner->origin, entry->lastOrigin);
+		VectorCopy (owner->angles, entry->lastAngles);
+		entry->lastTransform = RT_GetBrushModelMatrix (owner);
 
 		R_ClearTextureChains (entry->model, chain_model_0);
 
@@ -1322,45 +1330,72 @@ static qboolean RT_StaticMovableCovers (const rt_uploadsurf_state_t *s)
 	return &cl.entities[entry->ownerIndex] == s->ent;
 }
 
+static void RT_StaticMovableApplyTransform (const rt_movable_model_t *entry, const QrTransform *transform)
+{
+	for (int i = 0; i < entry->numBatches; i++)
+	{
+		QrUpdateTransformInfo updateInfo = {
+			.movableStaticUniqueID = entry->batchUniqueIDs[i],
+			.transform = *transform,
+		};
+
+		QrResult r = qrUpdateGeometryTransform (vulkan_globals.instance, &updateInfo);
+		QR_CHECK (r);
+	}
+}
+
+static QrTransform RT_StaticMovableHiddenTransform (const rt_movable_model_t *entry)
+{
+	vec3_t localCenter;
+	for (int k = 0; k < 3; k++)
+		localCenter[k] = 0.5f * (entry->model->mins[k] + entry->model->maxs[k]);
+
+	const QrFloat3D worldCenter = ApplyTransform (&entry->lastTransform, localCenter);
+	QrTransform     hidden = {0};
+	hidden.matrix[0][3] = worldCenter.data[0];
+	hidden.matrix[1][3] = worldCenter.data[1];
+	hidden.matrix[2][3] = worldCenter.data[2];
+	return hidden;
+}
+
 void RT_StaticMovableUpdate (void)
 {
+	const qboolean drawEntities = CVAR_TO_BOOL (r_drawentities);
+
 	for (rt_movable_model_t *entry = rt_movable_models; entry != NULL; entry = entry->next)
 	{
-		entity_t    *owner;
-		QrTransform  transform;
-
-		if (entry->numBatches == 0 || entry->ownerIndex <= 0 || entry->ownerIndex >= cl.num_entities)
+		if (entry->numBatches == 0 || entry->ownerIndex <= 0)
 			continue;
 
-		owner = &cl.entities[entry->ownerIndex];
+		entity_t      *owner = (entry->ownerIndex < cl.num_entities) ? &cl.entities[entry->ownerIndex] : NULL;
+		const qboolean shouldHide = !drawEntities ||
+		                            owner == NULL ||
+		                            owner->model != entry->model ||
+		                            ENTALPHA_DECODE (owner->alpha) < 1.0f;
 
-		if (owner->model != entry->model)
+		if (shouldHide)
 		{
-			if (owner->model == NULL && owner->msgtime != cl.mtime[0])
-				continue;
-
-			Atomic_StoreUInt32 (&rt_require_static_submit, true);
+			if (!entry->hidden)
+			{
+				const QrTransform hidden = RT_StaticMovableHiddenTransform (entry);
+				RT_StaticMovableApplyTransform (entry, &hidden);
+				entry->hidden = true;
+			}
 			continue;
 		}
 
-		if (VectorCompare (owner->origin, entry->lastOrigin) && VectorCompare (owner->angles, entry->lastAngles))
+		if (!entry->hidden &&
+		    VectorCompare (owner->origin, entry->lastOrigin) &&
+		    VectorCompare (owner->angles, entry->lastAngles))
 			continue;
 
-		transform = RT_GetBrushModelMatrix (owner);
-
-		for (int i = 0; i < entry->numBatches; i++)
-		{
-			QrUpdateTransformInfo updateInfo = {
-				.movableStaticUniqueID = entry->batchUniqueIDs[i],
-				.transform = transform,
-			};
-
-			QrResult r = qrUpdateGeometryTransform (vulkan_globals.instance, &updateInfo);
-			QR_CHECK (r);
-		}
+		const QrTransform transform = RT_GetBrushModelMatrix (owner);
+		RT_StaticMovableApplyTransform (entry, &transform);
 
 		VectorCopy (owner->origin, entry->lastOrigin);
 		VectorCopy (owner->angles, entry->lastAngles);
+		entry->lastTransform = transform;
+		entry->hidden = false;
 	}
 }
 
@@ -5541,6 +5576,12 @@ static void RT_CollectWorldEmissiveLightsAndBuild (void)
 void RT_RecollectWorldEmissiveLights (void)
 {
 	RT_CollectWorldEmissiveLightsAndBuild ();
+}
+
+qboolean RT_AliasTextureCanEmitLight (gltexture_t *tex)
+{
+	rt_emissive_params_t params;
+	return tex != NULL && RT_EmissiveLightParamsForTex (tex, &params) && params.material != QR_NO_MATERIAL;
 }
 
 #define RT_BRUSHCLUSTER_CACHE_SIZE 256

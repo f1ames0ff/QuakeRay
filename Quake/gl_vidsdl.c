@@ -209,6 +209,7 @@ atomic_uint32_t rt_end_task_running;
 	   whose alpha comparison has its sign inverted and which reads no other state. */ \
 	CVAR_DEF_T (rt_world_batch_merge, "1") \
 	CVAR_DEF_T (rt_brush_persistent, "1") \
+	CVAR_DEF_T (rt_alias_persistent, "1") \
 	/* 0 keeps the positional reuse test (the current list must be a prefix of the create-time
 	   shape with the identity fields equal); 1, the default, compares the primitive counts
 	   rank-wise instead - a superset of the positional test that also ignores the list order,
@@ -1575,6 +1576,7 @@ qboolean RT_Bench_Report (const char *demo)
 	RT_Bench_Setting (f, "rt_truelight");
 	RT_Bench_Setting (f, "rt_world_batch_merge");
 	RT_Bench_Setting (f, "rt_brush_persistent");
+	RT_Bench_Setting (f, "rt_alias_persistent");
 	RT_Bench_Setting (f, "rt_dyn_blas_sorted");
 	RT_Bench_Setting (f, "rt_dyn_blas_update");
 	RT_Bench_Setting (f, "rt_dyn_blas_headroom");
@@ -4864,6 +4866,7 @@ void VID_Init (void)
 	Cvar_SetCallback (&rt_light_styles, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_light_styles_reach, RT_LightStylesChanged_f);
 	Cvar_SetCallback (&rt_brush_persistent, RT_BrushPersistentChanged_f);
+	Cvar_SetCallback (&rt_alias_persistent, RT_BrushPersistentChanged_f);
 	Cvar_SetCallback (&rt_dtal_minarea, RT_DtalCollectChanged_f);
 	Cvar_SetCallback (&rt_dtal_maxpolys, RT_EmissiveLimitsChanged_f);
 	Cvar_SetCallback (&rt_dtal_clearance, RT_EmissiveLimitsChanged_f);

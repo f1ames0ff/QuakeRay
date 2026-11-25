@@ -114,6 +114,8 @@ typedef struct entity_s
 	vec3_t trailorg;   // previous particle trail point
 
 	lightcache_t lightcache; // alias light trace cache
+	int          rt_static_index;     // 1-based index in cl.static_entities, 0 if none
+	uint32_t     rt_static_alias_gen; // matches rt_static_alias_generation when uploaded statically
 } entity_t;
 
 // !!! if this is changed, it must be changed in asm_draw.h too !!!
