@@ -121,6 +121,10 @@ extern cvar_t rt_sky_sun;
 extern cvar_t rt_sky_sun_pitch;
 extern cvar_t rt_sky_sun_yaw;
 extern cvar_t rt_physical_sun;
+extern cvar_t rt_physical_sky;
+extern cvar_t rt_sky_time_enable;
+extern cvar_t rt_sky_moon;
+extern cvar_t rt_sky_moon_phase;
 extern cvar_t rt_materials_only;
 extern cvar_t rt_cluster_dlights;
 extern cvar_t rt_particle_proxy_gate;
@@ -371,23 +375,67 @@ static void R_SetupContext (cb_context_t *cbx)
 		cbx, glx + r_refdef.vrect.x, gly + glheight - r_refdef.vrect.y - r_refdef.vrect.height, r_refdef.vrect.width, r_refdef.vrect.height, 0.0f, 1.0f);
 }
 
+static qboolean RT_ResolveSunLightState (float sun_gain, vec3_t upload_dir, vec3_t color)
+{
+	vec3_t to_sun, to_moon;
+	float  celestial_rot = 0.0f;
+	RT_ComputeCelestialFrame (cl.time, to_sun, to_moon, &celestial_rot);
+	const float eff_gain = sun_gain > 0.001f ? sun_gain : 1.0f;
+
+	if (!CVAR_TO_BOOL (rt_sky_time_enable))
+	{
+		RT_GetSunColor (color);
+		VectorScale (color, eff_gain, color);
+		VectorScale (to_sun, -1.0f, upload_dir);
+		return true;
+	}
+
+	vec3_t trans;
+	RT_EvalSunGroundTransmittance (to_sun, trans);
+	if (trans[0] + trans[1] + trans[2] > 1e-4f)
+	{
+		RT_GetSunColor (color);
+		color[0] *= trans[0] * eff_gain;
+		color[1] *= trans[1] * eff_gain;
+		color[2] *= trans[2] * eff_gain;
+		VectorScale (to_sun, -1.0f, upload_dir);
+		return true;
+	}
+
+	if (to_moon[2] > 0.0f && CVAR_TO_FLOAT (rt_sky_moon) > 0.001f)
+	{
+		const float phase = CVAR_TO_FLOAT (rt_sky_moon_phase);
+		const float phase_scale = phase >= 0.0f
+			? (0.18f + 0.82f * CLAMP (0.0f, phase, 1.0f))
+			: 0.7f;
+		const float moon_scale = eff_gain * 0.06f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
+		                         phase_scale * q_min (1.0f, to_moon[2] * 5.0f);
+		RT_GetMoonColor (color);
+		VectorScale (color, moon_scale, color);
+		VectorScale (to_moon, -1.0f, upload_dir);
+		return true;
+	}
+
+	return false;
+}
+
 static void RT_UploadSunLight (void)
 {
-	if (CVAR_TO_BOOL (rt_materials_only) || !CVAR_TO_BOOL (rt_physical_sun))
+	const qboolean time_sun = CVAR_TO_BOOL (rt_physical_sky) && CVAR_TO_BOOL (rt_sky_time_enable);
+	if (CVAR_TO_BOOL (rt_materials_only) || (!CVAR_TO_BOOL (rt_physical_sun) && !time_sun))
 	{
 		return;
 	}
 
-	if (CVAR_TO_FLOAT (rt_sky_sun) > 0.001f)
+	const float sun_gain = CVAR_TO_FLOAT (rt_sky_sun);
+	if (sun_gain > 0.001f || time_sun)
 	{
-		vec3_t angles = {CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0};
+		vec3_t upload_dir, color;
+		if (!RT_ResolveSunLightState (sun_gain, upload_dir, color))
+		{
+			return;
+		}
 
-		vec3_t forward, right, up;
-		AngleVectors (angles, forward, right, up);
-
-		vec3_t color;
-		RT_GetSunColor (color);
-		VectorScale (color, CVAR_TO_FLOAT (rt_sky_sun), color);
 		// The sun is a light source like every other one, so it needs the same
 		// radiometric fixup the world and dlight sources get. Without it its 0..1
 		// colour reached the shading orders of magnitude below them, which is
@@ -405,7 +453,7 @@ static void RT_UploadSunLight (void)
 		QrDirectionalLightUploadInfo info = {
 			.uniqueID = (uint64_t)UINT32_MAX + 2 + RT_CUSTOM_LIGHTS_MAX,
 			.color = {color[0], color[1], color[2]},
-			.direction = {forward[0], forward[1], forward[2]},
+			.direction = {upload_dir[0], upload_dir[1], upload_dir[2]},
 			.angularDiameterDegrees = 0.05f,
 		};
 

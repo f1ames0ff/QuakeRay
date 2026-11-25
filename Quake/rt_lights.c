@@ -1677,6 +1677,11 @@ static const char *const rt_sky_names[] = {
     "rt_physical_sun", "rt_sky_sun", "rt_sky_sun_disc", "rt_sky_sun_color",
     "rt_sky_sun_size", "rt_sky_sun_pitch", "rt_sky_sun_yaw",
     "rt_sky_godrays", "rt_sky_godrays_intensity", "rt_sky_godrays_sky_threshold",
+    "rt_sky_time_enable", "rt_sky_time", "rt_sky_time_speed",
+    "rt_sky_latitude", "rt_sky_azimuth",
+    "rt_sky_atmosphere_density", "rt_sky_mie", "rt_sky_ozone",
+    "rt_sky_stars_enable", "rt_sky_stars_density", "rt_sky_stars",
+    "rt_sky_moon", "rt_sky_moon_color", "rt_sky_moon_size", "rt_sky_moon_phase",
 };
 
 #define RT_SKY_COUNT (int)(sizeof(rt_sky_names) / sizeof(rt_sky_names[0]))
