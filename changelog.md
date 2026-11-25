@@ -1,11 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.60.0
 
 ### Added
+- **Synchronized `0.60.0` engine and SDK release** — QuakeRay and `QuakeRaySDK` advance together to `0.60.0` (`QR_API_VERSION 1.07.0000`), completing the extraction of the Vulkan/NVRHI path-tracing renderer into a standalone reusable SDK (`QuakeRaySDK`).
+- **Native 64-bit Linux support and source-built AMD FSR 3.1** — added the Linux engine runtime, SDL2/Vulkan build pipeline (`build_linux.sh`), Linux performance runners, and standalone `quakerayeditor` X11/Vulkan target alongside Windows, with AMD FidelityFX SDK 1.1.4 (FSR 3.1) compiled directly from vendored sources on both Windows and Linux.
+- **Procedural AAA 24-hour sky, atmosphere, moon, and 2048px starfield** — replaced static/flat clear sky gradients with a physically based spherical Rayleigh/Mie/ozone atmospheric scattering model (`2048×2048×12` HDR sky cubemap at high/ultra), anti-aliased 3-tier night starfield, phased moon with balanced night illumination, 3D volumetric clouds with solar eclipse shadow coupling into godrays, independent RGB alien sky tints (`rt_sky_tint_r/g/b`), and a live 24-hour celestial ephemeris in the engine and `quakerayeditor`.
+- **Real-time Subsurface Scattering (SSS) and feathered mask authoring** — added subsurface scattering light transport for organic surfaces and interactive circular brush / purple-overlay feathered SSS mask painting in the material editor.
+- **Texture filtering menu with up to 16x Anisotropic filtering** — added upstream-style texture filtering options (`Nearest` through `16x Anisotropic`, 16x default) in Video Options backed by dynamic SDK sampler mipmap/anisotropy controls.
+- **Standalone `quakerayeditor` and marquee multi-light editing** — added model material editing, procedural gloss/SSS authoring, sky/DTAL controls, standard light persistence, and drag-marquee multi-light selection with batch editing.
 - **Projector and custom spot lights can cast volumetric light shafts** — a material light with `is_light` and `light_projector` shows the `light_shafts` toggle and a per-material `light_shafts_power`, and a custom spot light shows the same toggle and power in its own form. The shaft follows the source's colour, cone, direction and reach; DTAL groups inherit the material flags and power, while a custom light is independent. DTAL and textured-area shafts take their per-froxel sample from the nearest point on the emitter plane instead of one centre point, so the beam starts across the whole surface and a single shadow ray keeps the area smooth; corner sampling of the whole area made the shaft visibly grainy. The scattering is accumulated in a frustum-aligned 160x88x64 volume, jittered along the view ray, prefix-integrated front to back along z, then reconstructed with a dithered volume lookup and a full-resolution screen-space history that reprojects 2x2 G-buffer taps and validates depth and normal. This keeps the shafts smooth and removes both the grid stair-stepping and the depth bands of the old march. Up to 64 simultaneous shaft sources are collected per frame, so large DTAL sets no longer lose their projectors after the first eight. `rt_light_shafts` is the master switch and `rt_light_shafts_resolution` is a low/medium/high dropdown that trades reconstruction stability against response time. The existing sun shafts gain a low/medium/high/ultra/extreme resolution dropdown as well.
 
 ### Changed
+- **Overhauled spatio-temporal reflection and emissive A-SVGF denoisers** — modernized the reflection denoiser (GGX roughness handling, half-resolution specular reconstruction, virtual reprojection, and pipeline layout fixes for clean weapon/glass reflections) and upgraded the emissive/diffuse A-SVGF pipeline with path-space and near-field emissive regularization, variance-guided HF A-trous filtering, trimmed LF deflickering, grazing plane-distance reprojection, 5x5 fast-history moments, and anti-ringing rotated A-trous kernels.
+- **Arcane Dimensions and large-map performance optimizations** — optimized both the host frame and SDK scene/light/geometry pipelines for massive community maps with 1,500+ dynamic lights (persistent alias model geometry caching, faster dynamic brush/entity handling, and refined GPU cluster light admission/ranking).
 - **Presentation has three explicit host modes and never silently falls back**
   — `vid_vsync 1` is the default Adaptive mode and maps to
   `VK_PRESENT_MODE_FIFO_RELAXED_KHR`, `2` is VSync and maps to
@@ -36,6 +44,9 @@
 - **The swapchain log reports the selected path** — the renderer now prints the
   actual fallback `VkPresentModeKHR`, the swapchain image count and whether
   present-wait is active instead of echoing only the requested logical mode.
+
+### Fixed
+- **Visual editor & host reliability hardening** — resolved 79 tracked editor issues (across critical, high, medium, and low waves) and 91 tracked host engine bugs, fixed water-wall-edge sky leaks, fixed breakable brush-model hiding in large mods, fixed metric-scale vector normalization, and added automated Linux ASan/UBSan, C++/HLSL static-analysis, complexity, and GPLv2+ header CI gates.
 
 ## v0.51.0
 

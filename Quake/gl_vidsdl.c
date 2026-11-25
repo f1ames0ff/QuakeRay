@@ -252,6 +252,21 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_sky_sun_pitch, "140") \
 	CVAR_DEF_T (rt_sky_sun_yaw, "120") \
 	CVAR_DEF_T (rt_sky_sun_preset, "0") \
+	CVAR_DEF_T (rt_sky_time_enable, "0") \
+	CVAR_DEF_T (rt_sky_time, "14.0") \
+	CVAR_DEF_T (rt_sky_time_speed, "0.0") \
+	CVAR_DEF_T (rt_sky_latitude, "35.0") \
+	CVAR_DEF_T (rt_sky_azimuth, "0.0") \
+	CVAR_DEF_T (rt_sky_atmosphere_density, "1.0") \
+	CVAR_DEF_T (rt_sky_mie, "1.0") \
+	CVAR_DEF_T (rt_sky_ozone, "1.0") \
+	CVAR_DEF_T (rt_sky_stars_enable, "1") \
+	CVAR_DEF_T (rt_sky_stars_density, "1.0") \
+	CVAR_DEF_T (rt_sky_stars, "1.0") \
+	CVAR_DEF_T (rt_sky_moon, "1.0") \
+	CVAR_DEF_T (rt_sky_moon_color, "190 210 255") \
+	CVAR_DEF_T (rt_sky_moon_size, "1.0") \
+	CVAR_DEF_T (rt_sky_moon_phase, "0.85") \
 	CVAR_DEF_T (rt_flashlight, "0") \
 	CVAR_DEF_T (rt_dlightspot_intensity, "1") \
 	\
@@ -3077,6 +3092,7 @@ typedef enum
 	RT_COLOR_SKY,
 	RT_COLOR_SUN,
 	RT_COLOR_CLOUDS,
+	RT_COLOR_MOON,
 	RT_COLOR_LIGHT,
 	RT_COLOR_GLOBALLIGHT,
 	RT_COLOR_WATER,
@@ -3087,8 +3103,9 @@ typedef enum
 
 static rt_color_t rt_colors[RT_COLOR_COUNT] = {
 	[RT_COLOR_SKY]         = {.cvar = &rt_sky_color,        .fallback = {0.0f, 169 / 255.0f, 1.0f},       .dirty = true},
-	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,        .fallback = {1.0f, 238 / 255.0f, 191 / 255.0f}, .dirty = true},
+	[RT_COLOR_SUN]         = {.cvar = &rt_sky_sun_color,    .fallback = {1.0f, 238 / 255.0f, 191 / 255.0f}, .dirty = true},
 	[RT_COLOR_CLOUDS]      = {.cvar = &rt_sky_clouds_color, .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
+	[RT_COLOR_MOON]        = {.cvar = &rt_sky_moon_color,   .fallback = {190 / 255.0f, 210 / 255.0f, 1.0f}, .dirty = true},
 	[RT_COLOR_LIGHT]       = {.cvar = &rt_light_color,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_GLOBALLIGHT] = {.cvar = &rt_globallight,      .fallback = {1.0f, 1.0f, 1.0f},                .dirty = true},
 	[RT_COLOR_WATER]       = {.cvar = &rt_water_color,      .fallback = {171 / 255.0f, 193 / 255.0f, 210 / 255.0f}, .dirty = true},
@@ -3255,6 +3272,144 @@ void RT_ApplyPendingSunEditor (void)
 void RT_GetSkyCloudsColor (float color[3])
 {
 	RT_ColorGet (&rt_colors[RT_COLOR_CLOUDS], color);
+}
+
+void RT_GetMoonColor (float color[3])
+{
+	RT_ColorGet (&rt_colors[RT_COLOR_MOON], color);
+}
+
+static void RT_CelestialArcDir (float hour_angle, float lat_rad, float cos_az, float sin_az, vec3_t out_vec)
+{
+	const float local_east = -sinf (hour_angle);
+	const float local_north = -cosf (hour_angle) * sinf (lat_rad);
+	const float local_up = cosf (hour_angle) * cosf (lat_rad);
+
+	out_vec[0] = local_east * cos_az - local_north * sin_az;
+	out_vec[1] = local_east * sin_az + local_north * cos_az;
+	out_vec[2] = local_up;
+}
+
+void RT_ComputeCelestialFrame (double time_sec, vec3_t sun_dir, vec3_t moon_dir, float *celestial_rot_rad)
+{
+	static const double k_pi = 3.14159265358979323846;
+
+	if (!CVAR_TO_BOOL (rt_sky_time_enable))
+	{
+		vec3_t angles = {CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0.0f};
+		vec3_t forward, right, up;
+		AngleVectors (angles, forward, right, up);
+		VectorScale (forward, -1.0f, sun_dir);
+
+		moon_dir[0] = -sun_dir[0] + 0.15f;
+		moon_dir[1] = -sun_dir[1] - 0.10f;
+		moon_dir[2] = -sun_dir[2];
+		VectorNormalize (moon_dir);
+
+		if (celestial_rot_rad)
+			*celestial_rot_rad = 0.0f;
+		return;
+	}
+
+	double hours = (double)CVAR_TO_FLOAT (rt_sky_time) +
+	               time_sec * ((double)q_max (0.0f, CVAR_TO_FLOAT (rt_sky_time_speed)) / 60.0);
+	hours = fmod (hours, 24.0);
+	if (hours < 0.0)
+		hours += 24.0;
+
+	const float hour_angle = (float)((hours - 12.0) * (k_pi / 12.0));
+	const float lat_deg = CLAMP (-80.0f, CVAR_TO_FLOAT (rt_sky_latitude), 80.0f);
+	const float az_rad = (float)(CVAR_TO_FLOAT (rt_sky_azimuth) * M_PI_DIV_180);
+	const float cos_az = cosf (az_rad);
+	const float sin_az = sinf (az_rad);
+
+	RT_CelestialArcDir (hour_angle, (float)(lat_deg * M_PI_DIV_180), cos_az, sin_az, sun_dir);
+	const float moon_lat_deg = CLAMP (-70.0f, lat_deg + (lat_deg >= 0.0f ? 15.0f : -15.0f), 70.0f);
+	RT_CelestialArcDir (hour_angle + (float)k_pi + 0.30f, (float)(moon_lat_deg * M_PI_DIV_180),
+	                    cos_az, sin_az, moon_dir);
+
+	if (celestial_rot_rad)
+		*celestial_rot_rad = hour_angle;
+}
+
+void RT_EvalSunGroundTransmittance (const vec3_t sun_dir, vec3_t out_trans)
+{
+	const float z = sun_dir[2];
+	const float h_lin = CLAMP (0.0f, (z + 0.024f) / 0.039f, 1.0f);
+	const float smooth_horizon = h_lin * h_lin * (3.0f - 2.0f * h_lin);
+
+	if (smooth_horizon <= 0.0f)
+	{
+		out_trans[0] = out_trans[1] = out_trans[2] = 0.0f;
+		return;
+	}
+
+	const float density = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_atmosphere_density), 4.0f);
+	if (density <= 1e-5f)
+	{
+		out_trans[0] = out_trans[1] = out_trans[2] = smooth_horizon;
+		return;
+	}
+
+	const float mie = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_mie), 4.0f);
+	const float ozone = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_ozone), 4.0f);
+	vec3_t sky_color;
+	RT_GetSkyColor (sky_color);
+
+	const float sky_peak = q_max (q_max (sky_color[0], sky_color[1]), sky_color[2]);
+	const vec3_t sky_norm = {
+		sky_peak > 1e-5f ? sky_color[0] / sky_peak : 0.0f,
+		sky_peak > 1e-5f ? sky_color[1] / sky_peak : 0.663f,
+		sky_peak > 1e-5f ? sky_color[2] / sky_peak : 1.0f,
+	};
+
+	const float earth_ext[3] = {5.8e-6f, 12.2e-6f, 30.0e-6f};
+	const float ozone_ext[3] = {0.65e-6f * ozone * density, 1.88e-6f * ozone * density, 0.085e-6f * ozone * density};
+	const float mie_ext = 4.7e-6f * mie * density;
+	float ray_ext[3];
+	for (int c = 0; c < 3; c++)
+	{
+		const float custom = q_max (sky_norm[c], 0.08f) * 26.0e-6f;
+		ray_ext[c] = (earth_ext[c] + (custom - earth_ext[c]) * 0.22f) * density;
+	}
+
+	const float planet_r = 6360000.0f;
+	const float top_r = 6440000.0f;
+	const float ro_z = planet_r + 10.0f;
+	const float rd_z = q_max (z, 0.022f);
+	const float rd_h = sqrtf (q_max (0.0f, 1.0f - rd_z * rd_z));
+	const float b = ro_z * rd_z;
+	const float c_term = ro_z * ro_z - top_r * top_r;
+	const float ray_len = q_max (0.0f, -b + sqrtf (q_max (0.0f, b * b - c_term)));
+
+	float od_r = 0.0f, od_m = 0.0f, od_o = 0.0f;
+	const float step_len = ray_len * 0.25f;
+	for (int i = 0; i < 4; i++)
+	{
+		const float dist = ((float)i + 0.5f) * step_len;
+		const float px = rd_h * dist;
+		const float pz = ro_z + rd_z * dist;
+		const float h = q_max (sqrtf (px * px + pz * pz) - planet_r, 0.0f);
+		od_r += expf (-h / 8000.0f) * step_len;
+		od_m += expf (-h / 1200.0f) * step_len;
+		od_o += q_max (0.0f, 1.0f - fabsf (h - 25000.0f) / 15000.0f) * step_len;
+	}
+
+	float direct_t[3];
+	for (int ch = 0; ch < 3; ch++)
+	{
+		const float tau = ray_ext[ch] * od_r + mie_ext * od_m + ozone_ext[ch] * od_o;
+		direct_t[ch] = expf (-tau);
+	}
+	const float peak_t = q_max (q_max (direct_t[0], direct_t[1]), direct_t[2]);
+	const float grazing_t = q_min (q_max (q_max (z, 0.0f) / 0.18f, 0.0f), 1.0f);
+	const float grazing = 1.0f - grazing_t * grazing_t * (3.0f - 2.0f * grazing_t);
+	const float floor_val = peak_t * 0.36f;
+	for (int ch = 0; ch < 3; ch++)
+	{
+		const float ms = q_max (direct_t[ch], floor_val);
+		out_trans[ch] = smooth_horizon * (direct_t[ch] + (ms - direct_t[ch]) * (grazing * 0.42f));
+	}
 }
 
 void RT_GetLightColor (float color[3])
@@ -3854,6 +4009,111 @@ static void GL_ApplyLightShaftVolumetricOverrides (QrDrawFrameVolumetricParams *
 		!CVAR_TO_BOOL (rt_light_shafts);
 }
 
+static void GL_PopulatePhysicalSkyParams (QrDrawFrameSkyParams *sky_params,
+                                          qboolean              materials_only,
+                                          const vec3_t          celestial_sun_dir,
+                                          const vec3_t          celestial_moon_dir,
+                                          const vec3_t          sun_tint,
+                                          float                 celestial_rot_rad)
+{
+	sky_params->skyCloudsQuality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_clouds_quality), (float)QR_SKY_CLOUDS_MAX_QUALITY);
+
+	float *c = &sky_params->skyCubemapRotationTransform.matrix[0][0];
+	// the cloud settings ride in the otherwise unused rotation matrix of this
+	// sky type (keeps the public QrDrawFrameSkyParams layout unchanged)
+	RT_GetSkyCloudsColor (c);
+	c[3] = CVAR_TO_FLOAT (rt_sky_clouds_coverage);
+	c[4] = CVAR_TO_FLOAT (rt_sky_clouds_density);
+	c[5] = CVAR_TO_FLOAT (rt_sky_clouds_speed);
+	c[6] = CVAR_TO_BOOL (rt_sky_clouds) ? 1.0f : 0.0f;
+	c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
+	c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
+
+	vec3_t moon_color;
+	RT_GetMoonColor (moon_color);
+	const float moon_gain = q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon));
+	VectorScale (moon_color, moon_gain, moon_color);
+
+	const float sun_gain = CVAR_TO_FLOAT (rt_sky_sun);
+	const qboolean time_sun = CVAR_TO_BOOL (rt_sky_time_enable);
+	sky_params->proceduralAtmosphereConfigured = !materials_only;
+	sky_params->proceduralSunEnabled =
+		(sun_gain > 0.001f || time_sun || CVAR_TO_FLOAT (rt_sky_sun_disc) > 0.0f) ? 1 : 0;
+	RT_VEC3_SET (sky_params->proceduralSunDirection.data, celestial_sun_dir[0], celestial_sun_dir[1], celestial_sun_dir[2]);
+	RT_VEC3_SET (sky_params->proceduralSunTint.data, sun_tint[0], sun_tint[1], sun_tint[2]);
+	sky_params->proceduralSunStrength = (sun_gain > 0.001f) ? sun_gain : 1.0f;
+	RT_VEC3_SET (sky_params->proceduralMoonDirection.data, celestial_moon_dir[0], celestial_moon_dir[1], celestial_moon_dir[2]);
+	RT_VEC3_SET (sky_params->proceduralMoonColor.data, moon_color[0], moon_color[1], moon_color[2]);
+	sky_params->proceduralMoonSize = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_moon_size), 10.0f);
+	sky_params->proceduralMoonPhase = CVAR_TO_FLOAT (rt_sky_moon_phase);
+	sky_params->proceduralStarsEnabled = CVAR_TO_BOOL (rt_sky_stars_enable) ? 1 : 0;
+	sky_params->proceduralStarDensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_stars_density), 4.0f);
+	sky_params->proceduralStarIntensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_stars), 5.0f);
+	sky_params->celestialRotationRadians = celestial_rot_rad;
+	sky_params->atmosphereDensity = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_atmosphere_density), 4.0f);
+	sky_params->atmosphereMie = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_mie), 4.0f);
+	sky_params->atmosphereOzone = CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_ozone), 4.0f);
+}
+
+static void GL_ResolveVolumetricSkySource (qboolean     usePhysicalSky,
+                                           const vec3_t celestial_sun_dir,
+                                           const vec3_t celestial_moon_dir,
+                                           vec3_t       volume_light_color,
+                                           QrFloat3D   *volume_light_dir)
+{
+	const qboolean time_sun_active = usePhysicalSky && CVAR_TO_BOOL (rt_sky_time_enable);
+	const qboolean light_active =
+		(CVAR_TO_BOOL (rt_physical_sun) || time_sun_active) &&
+		(CVAR_TO_FLOAT (rt_sky_sun) > 0.001f || time_sun_active);
+
+	if (!light_active)
+	{
+		vec3_t volume_light_angles;
+		RT_VEC3_SET (volume_light_angles, CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0);
+		volume_light_color[0] = volume_light_color[1] = volume_light_color[2] = 0.0f;
+		*volume_light_dir = RT_AnglesToDir (volume_light_angles);
+		return;
+	}
+
+	if (!CVAR_TO_BOOL (rt_sky_time_enable))
+	{
+		vec3_t volume_light_angles;
+		RT_VEC3_SET (volume_light_angles, CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0);
+		RT_GetSunColor (volume_light_color);
+		*volume_light_dir = RT_AnglesToDir (volume_light_angles);
+		return;
+	}
+
+	vec3_t trans;
+	RT_EvalSunGroundTransmittance (celestial_sun_dir, trans);
+	if (trans[0] + trans[1] + trans[2] > 1e-4f)
+	{
+		RT_GetSunColor (volume_light_color);
+		volume_light_color[0] *= trans[0];
+		volume_light_color[1] *= trans[1];
+		volume_light_color[2] *= trans[2];
+		RT_VEC3_SET (volume_light_dir->data, -celestial_sun_dir[0], -celestial_sun_dir[1], -celestial_sun_dir[2]);
+		return;
+	}
+
+	if (celestial_moon_dir[2] > 0.0f && CVAR_TO_FLOAT (rt_sky_moon) > 0.001f)
+	{
+		const float phase = CVAR_TO_FLOAT (rt_sky_moon_phase);
+		const float phase_scale = phase >= 0.0f
+			? (0.18f + 0.82f * CLAMP (0.0f, phase, 1.0f))
+			: 0.7f;
+		const float moon_scale = 0.006f * q_max (0.0f, CVAR_TO_FLOAT (rt_sky_moon)) *
+		                         phase_scale * q_min (1.0f, celestial_moon_dir[2] * 5.0f);
+		RT_GetMoonColor (volume_light_color);
+		VectorScale (volume_light_color, moon_scale, volume_light_color);
+		RT_VEC3_SET (volume_light_dir->data, -celestial_moon_dir[0], -celestial_moon_dir[1], -celestial_moon_dir[2]);
+		return;
+	}
+
+	volume_light_color[0] = volume_light_color[1] = volume_light_color[2] = 0.0f;
+	RT_VEC3_SET (volume_light_dir->data, -celestial_sun_dir[0], -celestial_sun_dir[1], -celestial_sun_dir[2]);
+}
+
 /*
 =================
 GL_BuildEndRenderingSnapshot
@@ -4008,9 +4268,14 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		sky_base_color[0] = sky_base_color[1] = sky_base_color[2] = 0.0f;
 	}
 
+	vec3_t sun_tint;
+	RT_GetSunColor (sun_tint);
 	vec3_t sun_disc_color;
-	RT_GetSunColor (sun_disc_color);
-	VectorScale (sun_disc_color, CVAR_TO_FLOAT (rt_sky_sun_disc), sun_disc_color);
+	VectorScale (sun_tint, CVAR_TO_FLOAT (rt_sky_sun_disc), sun_disc_color);
+
+	vec3_t celestial_sun_dir, celestial_moon_dir;
+	float  celestial_rot_rad = 0.0f;
+	RT_ComputeCelestialFrame (cl.time, celestial_sun_dir, celestial_moon_dir, &celestial_rot_rad);
 
 	QrDrawFrameSkyParams sky_params = {
 		.skyType = CVAR_TO_BOOL (r_fastsky) ? QR_SKY_TYPE_COLOR
@@ -4042,18 +4307,8 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 
 	if (usePhysicalSky)
 	{
-		sky_params.skyCloudsQuality = (uint32_t)CLAMP (0.0f, CVAR_TO_FLOAT (rt_sky_clouds_quality), (float)QR_SKY_CLOUDS_MAX_QUALITY);
-
-		float *c = &sky_params.skyCubemapRotationTransform.matrix[0][0];
-		// the cloud settings ride in the otherwise unused rotation matrix of this
-		// sky type (keeps the public QrDrawFrameSkyParams layout unchanged)
-		RT_GetSkyCloudsColor (c);
-		c[3] = CVAR_TO_FLOAT (rt_sky_clouds_coverage);
-		c[4] = CVAR_TO_FLOAT (rt_sky_clouds_density);
-		c[5] = CVAR_TO_FLOAT (rt_sky_clouds_speed);
-		c[6] = CVAR_TO_BOOL (rt_sky_clouds) ? 1.0f : 0.0f;
-		c[7] = CVAR_TO_FLOAT (rt_sky_clouds_height);
-		c[8] = CVAR_TO_FLOAT (rt_sky_clouds_thickness);
+		GL_PopulatePhysicalSkyParams (&sky_params, materials_only, celestial_sun_dir,
+		                              celestial_moon_dir, sun_tint, celestial_rot_rad);
 	}
 	else if (!CVAR_TO_BOOL (r_fastsky))
 	{
@@ -4075,15 +4330,10 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		}
 	}
 
-	vec3_t volume_light_angles;
-	vec3_t volume_light_color;
-
-	RT_VEC3_SET (volume_light_angles, CVAR_TO_FLOAT (rt_sky_sun_pitch), CVAR_TO_FLOAT (rt_sky_sun_yaw), 0);
-
-	if (CVAR_TO_BOOL (rt_physical_sun) && CVAR_TO_BOOL (rt_sky_sun))
-		RT_GetSunColor (volume_light_color);
-	else
-		volume_light_color[0] = volume_light_color[1] = volume_light_color[2] = 0.0f;
+	vec3_t    volume_light_color;
+	QrFloat3D volume_light_dir;
+	GL_ResolveVolumetricSkySource (usePhysicalSky, celestial_sun_dir, celestial_moon_dir,
+	                               volume_light_color, &volume_light_dir);
 
 	VectorScale (volume_light_color, CVAR_TO_FLOAT (rt_volume_lintensity) * CVAR_TO_FLOAT (rt_brightness), volume_light_color);
 	RT_APPLY_LIGHT_TINT (volume_light_color);
@@ -4103,7 +4353,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.ambientColor = RT_VEC3 (volume_ambient_color),
 		.scaterring = materials_only ? 0.0f : CVAR_TO_FLOAT (rt_volume_scatter),
 		.sourceColor = RT_VEC3 (volume_light_color),
-		.sourceDirection = RT_AnglesToDir (volume_light_angles),
+		.sourceDirection = volume_light_dir,
 		.sourceAssymetry = CVAR_TO_FLOAT (rt_volume_lassymetry),
 	};
 	GL_ApplyLightShaftVolumetricOverrides (&volumetric_params, materials_only);

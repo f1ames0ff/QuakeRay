@@ -7746,13 +7746,45 @@ static const qre_global_t qre_globals[] = {
 	{ NULL,  "rt_sky_light_mult",   QRE_G_FLOAT, 0, 8,
 	  "How much light the sky casts on the level, separate from how bright the sky is drawn (rt_sky_brightness)." },
 	{ NULL,  "rt_sky_color",        QRE_G_COLOR, 0, 0,
-	  "The color the procedural sky is painted in, and the color of the light it casts." },
+	  "Atmosphere scattering tint color and emitted sky light tint." },
+	{ NULL,  "rt_sky_atmosphere_density", QRE_G_FLOAT, 0, 4,
+	  "Rayleigh/ozone atmosphere optical thickness (0 gives a dark space backdrop).", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_mie",          QRE_G_FLOAT, 0, 4,
+	  "Aerosol haze and solar aureole strength.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_ozone",        QRE_G_FLOAT, 0, 4,
+	  "Chappuis ozone band separating twilight crimson-orange from blue zenith.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 	{ NULL,  "rt_sky_ambient_lod",  QRE_G_INT,   0, 10,
 	  "Mip level the ambient sky light is read from: lower is more directional, 10 a flat wash." },
 	{ NULL,  "rt_sky_nee",          QRE_G_BOOL,  0, 0,
 	  "Sample the sky as an explicit light source." },
 	{ NULL,  "rt_physical_sky",     QRE_G_BOOL,  0, 0,
-	  "1 draws the procedural sky (painted in rt_sky_color, with clouds and a sun disc); 0 draws the classic sky texture." },
+	  "1 draws the procedural sky (with Rayleigh/Mie atmosphere, clouds, sun, moon and stars); 0 draws the classic sky texture." },
+
+	{ "Time of Day", "rt_sky_time_enable", QRE_G_BOOL, 0, 0,
+	  "Compute sun, moon and star rotation from 24-hour time of day and automatically enable directional sky sunlight.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_time",         QRE_G_FLOAT, 0, 24,
+	  "Time of day in hours (0 midnight, 6 dawn, 12 noon, 18 sunset).", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_time_speed",   QRE_G_FLOAT, 0, 60,
+	  "Day-night progression speed in hours per real minute (0 pauses).", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_latitude",     QRE_G_FLOAT, -80, 80,
+	  "Observer latitude in degrees, tilting the solar/lunar arc.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_azimuth",      QRE_G_FLOAT, -180, 180,
+	  "Compass azimuth offset for sunrise and sunset.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+
+	{ "Moon & Stars", "rt_sky_stars_enable", QRE_G_BOOL, 0, 0,
+	  "Enable the 3-tier procedural night starfield.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_stars_density", QRE_G_FLOAT, 0, 4,
+	  "Count and spatial density of stars across all three magnitude tiers.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_stars",        QRE_G_FLOAT, 0, 5,
+	  "Brightness of night stars and bright-star optical halos.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_moon",         QRE_G_FLOAT, 0, 4,
+	  "Brightness of the moon disc and night cloud lighting.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_moon_color",   QRE_G_COLOR, 0, 0,
+	  "Tint color of the moon disc and moonlight.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_moon_size",    QRE_G_FLOAT, 0, 10,
+	  "Moon disc angular size multiplier.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
+	{ NULL,  "rt_sky_moon_phase",   QRE_G_FLOAT, -1, 1,
+	  "Moon illumination phase (0 new, 0.5 half, 1 full, < 0 auto from sun angle).", NULL, NULL, QRE_COND_PHYSICAL_SKY },
 
 	{ "Clouds", "rt_sky_clouds",        QRE_G_BOOL,  0, 0,
 	  "Draw the volumetric clouds.", NULL, NULL, QRE_COND_PHYSICAL_SKY },
@@ -7939,6 +7971,8 @@ static void QRE_GlobalColorGet (const char *name, float rgb[3])
 		RT_GetSkyColor (rgb);
 	else if (!strcmp (name, "rt_sky_sun_color"))
 		RT_GetSunColor (rgb);
+	else if (!strcmp (name, "rt_sky_moon_color"))
+		RT_GetMoonColor (rgb);
 	else if (!strcmp (name, "rt_globallight"))
 		RT_GetGlobalLightColor (rgb);
 	else
@@ -8025,6 +8059,27 @@ static void QRE_DrawGlobalIntControl (const qre_global_t *g, int value)
 	}
 	else if (QR_GUI_SliderInt (g->name, &value, (int)g->min, (int)g->max, g->tip))
 		QR_Editor_HostCvarSet (g->name, va ("%d", value));
+}
+
+static void QRE_DrawTimeOfDayPresets (const char *cvar_name)
+{
+	static const struct { const char *label; const char *hour; } presets[] = {
+		{ "Dawn", "6.15" }, { "Noon", "12" }, { "Sunset", "17.85" }, { "Twilight", "18.25" }, { "Night", "0" },
+	};
+
+	if (strcmp (cvar_name, "rt_sky_time") != 0)
+		return;
+
+	for (int p = 0; p < (int)countof (presets); p++)
+	{
+		if (p > 0)
+			QR_GUI_SameLine ();
+		if (QR_GUI_Button (presets[p].label))
+		{
+			QR_Editor_HostCvarSet ("rt_sky_time_enable", "1");
+			QR_Editor_HostCvarSet ("rt_sky_time", presets[p].hour);
+		}
+	}
 }
 
 static void QRE_LightGlobalTab (void)
@@ -8120,6 +8175,7 @@ static void QRE_LightGlobalTab (void)
 			}
 			if (QR_GUI_SliderFloat (g->name, &value, g->min, g->max, g->tip))
 				QR_Editor_HostCvarSet (g->name, va ("%.4g", value));
+			QRE_DrawTimeOfDayPresets (g->name);
 			break;
 		}
 		case QRE_G_INT:

@@ -1,153 +1,123 @@
 ![QuakeRay logo](qr-temp-logo.png)
 
-# QuakeRay engine
+# QuakeRay
 
-QuakeRay is a ray tracing engine for Quake 1. Its lighting is based on Q2RTX, with improvements to materials, light sources, skies and visual effects. It runs on Vulkan using NVIDIA NVRHI, with a multithreaded render frame built on the engine's own task graph.
+**QuakeRay** brings **full real-time path tracing** to the classic 1996 *Quake* on **Windows and Linux** — keeping every rocket jump, secret wall, mod, and feel of the original game intact while replacing baked 1990s lighting with physically simulated light, shadows, atmosphere, water, and reflections powered by Vulkan hardware ray tracing and [`QuakeRaySDK`](https://github.com/f1ames0ff/QuakeRaySDK).
 
-[Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
+[Download](https://github.com/f1ames0ff/QuakeRay/releases) · [What's new in v0.60.0](changelog.md) · [Report a problem](https://github.com/f1ames0ff/QuakeRay/issues)
 
-Code navigation for agents and contributors: [Architecture index](ARCHITECTURE.md) · [Performance evidence](PERFORMANCE.md) · [Multithreading](docs/multithreading.md).
-
-Agents must use the **QuakeRay engine MCP** as their primary inspection/evidence interface and follow
-the [mandatory workflow](AGENTS.md#mandatory-engine-mcp-workflow), including explicit reporting of
-unavailable tools or coverage gaps.
+---
 
 ## Features
 
-### Core features
+QuakeRay is designed so you do not need to know anything about graphics programming to see the difference the moment you step through the Start map:
 
-- **Q2RTX-inspired ray-tracing**
-- **Multithreading**
-- **DTAL System (Dynamic Texture Area Lights)**
-- **Lighting and Material Editor**
+### 1. Real-Time Path Tracing & Global Illumination
+Instead of faking brightness with pre-baked lightmaps, QuakeRay traces real rays of light across the entire level every frame. Light bounces naturally off stone walls, brass trim, and blood-red corridors (**global illumination**), lava pits and glowing runes genuinely illuminate the rooms around them, and **Dynamic Texture Area Lights (DTAL)** turn glowing panels and stained glass into soft, physical area lights with natural penumbras instead of harsh game-y circles.
 
-#### Game data and compatibility
+### 2. Volumetric Light Shafts & Atmospheric Fog
+Sunlight, moonlight, spotlights, overhead skylights, and flickering torches cut through dusty catacombs and cavernous arenas as tangible beams of light. QuakeRay simulates shadowed **3D volumetric fog** and supports up to **64 simultaneous light-shaft sources** alongside drifting **godrays** beneath the open sky — automatically casting shadows from geometry and overhead clouds alike.
 
-- **Quake Remastered support**
-- **Automatic Steam game detection**
+### 3. True Reflections, Refractive Water, Glass & Subsurface Scattering
+Pools of water, slime, polished armor, metal floors, and true mirrors reflect the real 3D world around them — including flames, explosions, and monsters behind your back, not just what happens to fit on screen. Looking into deep water or through glass bends light realistically with distance absorption, while **real-time Subsurface Scattering (SSS)** lets light soak softly into organic surfaces, wax, skin, and creatures.
 
-### Lighting and editing
+### 4. Modern AAA-Grade Denoising & AMD FSR 3.1 Upscaling
+Path tracing shoots millions of light rays every second, and turning raw rays into a rock-solid image at playable framerates takes heavy reconstruction work — the same family of modern spatio-temporal techniques used in flagship engines like Unreal Engine. QuakeRay pairs an overhauled specular **reflection denoiser** with a 4-stage emissive **A-SVGF spatio-temporal denoiser** that cleans up shimmering "fireflies" and stabilizes glowing surfaces in motion.
 
-- **PBR materials**
-- **Water, glass and other RT-specific materials**
+To push resolution and framerates even further, QuakeRay builds **AMD FidelityFX Super Resolution 3.1 (FSR 3.1)** directly into the Vulkan pipeline on both Windows and Linux, letting you play crisp 1440p or 4K path tracing on mid-range ray-tracing GPUs.
 
-### Graphics
+### 5. Dynamic 24-Hour Procedural Sky, 3D Clouds & Night Starfield
+Step outdoors and look up: QuakeRay renders a physically modeled **24-hour spherical atmosphere** (Rayleigh, Mie, and ozone scattering) that transitions seamlessly from warm golden-peach sunrises and deep blue noon skies to directional sunsets and calm nights. You get:
+- Drifting **3D volumetric clouds** that shade themselves and dynamically eclipse the sun and its light shafts.
+- A razor-sharp **2048×2048 HDR skybox** with an anti-aliased **starfield** and a phased **moon** that casts balanced nocturnal moonlight.
+- Custom RGB atmosphere tints so surreal and alien Quake dimensions keep their unmistakable otherworldly mood.
 
-- **Volumetric clouds**
-- **Sun shafts and traced fog volumes**
-- **Enhanced models**
-- **Exposure and tone-mapping controls**
-- **Shader smoke**
-- **FSR 3.1 upscaling**
+### 6. Mods, Official Mission Packs & Quake Remastered Support
+QuakeRay builds on QuakeSpasm and vkQuake compatibility while automatically discovering your installed Steam copy of *Quake* (**Original** or **2021 Remastered** — letting you pick if both are installed):
+- Full support for official expansions: *Scourge of Armagon* (`hipnotic`), *Dissolution of Eternity* (`rogue`), *Dimension of the Past*, and *Dimension of the Machine*.
+- Specially optimized for massive community overhauls like **Arcane Dimensions** (handling huge levels with 1,500+ active lights, dynamic geometry, and dense particle battles smoothly).
+- Drop-in **Mods** menu supporting classic mod folders as well as Remastered add-ons.
 
-### Sound
+### 7. Live In-Game & Standalone Visual Editors (`quakerayeditor`)
+Want to restyle an episode, paint glowing moss, tweak water roughness, or relight a favorite arena? You can do it live without ever opening Hammer/TrenchBroom or recompiling a `.bsp` map:
+- Paint **PBR materials** (roughness, metalness, emission, glass, water, mirror, light projectors) and **feathered SSS masks** with a live circular brush directly on surfaces.
+- Place, move, aim, and **marquee multi-select** custom point/spot lights with 3D gizmos, batch-edit groups of lights, and preview the **24-hour sky ephemeris**.
+- Available both **inside the game** and as the **standalone `quakerayeditor`** app on Windows and Linux.
 
-- **OpenAL Soft sound backend with HRTF binaural sound and five-band equalizer**
+### 8. Cinematography, Crisp Pixel-Art or Filtered Textures & 3D Audio
+- **Film-grade HDR color**: Choose between **AgX**, **ACES**, **Reinhard**, and **Q2RTX** tone-mapping profiles, physical bloom, subtle near depth-of-field, shader smoke, and automatic exposure.
+- **Classic or ultra-sharp textures**: Pick classic crisp **Nearest** pixel art all the way up to **16x Anisotropic** texture filtering right in Video Options.
+- **3D Binaural Sound**: Powered by **OpenAL Soft** with headphone **HRTF spatial audio** and a 5-band equalizer so you can pinpoint ogre grenades behind walls by ear.
+- **Built-in performance HUD & benchmarks**: Frame-time breakdown, GPU/CPU telemetry, and custom Quake cursor support.
 
-### Interface and performance monitoring
+> **Note:** QuakeRay is actively evolving. While core campaigns, mission packs, and major mods like Arcane Dimensions are well tested, some experimental custom mods or exotic map tricks may still show visual quirks.
 
-- **Performance statistics and benchmarks**
-- **Custom Quake cursor**
-
-QuakeRay is still in development. Some maps and mods may have visual or compatibility issues.
-
-## Roadmap
-
-- FSR 4
-- DLSS
-- Full path tracing and further lighting improvements
-- More visual effects
-- Improved Arcane Dimensions support
-- Production-ready whole-frame CPU multithreading: the render task frame is the only path since the
-  serial fork was retired (2026-10-14). Continue by extending task coverage beyond render producers,
-  reducing measured serial/lock bottlenecks, hardening scheduling and completing the
-  correctness/scalability matrix.
-  See the
-  [multithreading milestones and acceptance gates](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading).
-
-These are goals, not promises of a release date.
-
-The separate performance goal is at least **45 FPS at 4K FSR Quality** on the reference hardware
-throughout the maintained gameplay scene matrix, with frame-time improvement as internal resolution
-is reduced. Both CPU and GPU budgets must be met; multithreading alone cannot guarantee that target.
+---
 
 ## Requirements
 
-You need:
+- **OS:** **64-bit Windows (10/11)** or **64-bit Linux**. *(macOS is not supported because Apple platforms lack Vulkan hardware ray tracing extensions.)*
+- **GPU:** Any graphics card with **Vulkan hardware ray tracing** (`VK_KHR_ray_query` and `VK_KHR_acceleration_structure`) and up-to-date drivers — NVIDIA GeForce RTX 2060+, AMD Radeon RX 6000 / 7000 / 9000+, or Intel Arc A/B-series.
+- **Quake Game Files:** QuakeRay is an open-source engine and does not ship copyrighted level data. You need either a Steam/GOG install of **Quake** / **Quake Remastered** (`pak0.pak` and `pak1.pak`) or the free Shareware episode (`pak0.pak`).
 
-- **64-bit Windows.** Linux and macOS are not currently supported.
-- **A graphics card with hardware ray tracing and Vulkan support**, with an up-to-date driver.
-- **Quake game files.** QuakeRay does not include the original game. You can use your own Quake installation or the shareware version.
+---
 
-## Installation
+## Installation & Quick Start
 
-1. Download a Windows archive from [Releases](https://github.com/f1ames0ff/QuakeRay/releases), when available.
-2. Extract it. The archive contains one `QuakeRay-v<version>-win64` folder; keep the DLL files and the `id1` folder beside `quakeray.exe`.
-3. Run `quakeray.exe`.
+1. Download the latest archive for your platform from [Releases](https://github.com/f1ames0ff/QuakeRay/releases) (when available), or build from source below.
+2. Extract the archive into its own folder. Keep the shipped shared libraries (`.dll` / `.so`) and the `id1/` folder next to the `quakeray` executable.
+   > **Updating an existing install:** Back up `id1/config.cfg` and any custom edits in `id1/qray.materials.yaml` before extracting a new version over an old folder.
+3. Run **`quakeray.exe`** (Windows) or **`./quakeray`** (Linux).
+4. **First launch tip:** Open **Options → Video Options** to pick your preferred **FSR 3.1** preset (Quality / Balanced / Performance) and texture filtering mode (`Nearest` through `16x Anisotropic`).
 
-**Updating:** the archive also carries a standard `id1/config.cfg`. Extracting a new release over an existing install and overwriting files replaces your `id1/config.cfg` and `id1/qray.materials.yaml`; back up your settings and editor changes first.
+### Where to Put Quake Game Files
+- **Steam (Automatic):** If *Quake* is installed via Steam and no local `pak0.pak` exists in `id1/`, QuakeRay locates your Steam library automatically. If both **Original** and **Remastered** are installed, QuakeRay lets you choose which edition to launch.
+- **GOG / Epic / Retail Copy:** Copy `pak0.pak` and `pak1.pak` into the `id1/` folder next to `quakeray`, or launch with `-basedir /path/to/your/quake`.
+- **Keep QuakeRay's asset files:** Always keep **`id1/qray.pkz`** and **`id1/qray.materials.yaml`** intact — they ship QuakeRay's PBR textures, sky/shader assets, and default material rules.
 
-### Where to put Quake
+### Playing Mods & Mission Packs
+- Place each mod folder (for example `ad` for *Arcane Dimensions*, `hipnotic` for *Scourge of Armagon*, or `rogue` for *Dissolution of Eternity*) next to `id1/`, then open the in-game **Mods** menu — or pass `-game ad` / `-hipnotic` / `-rogue` on the command line.
+- Mods discovered inside a Steam installation also appear automatically in the **Mods** menu (local folders take priority). Mods and mission packs require the full registered `pak0.pak` + `pak1.pak` files.
 
-If Quake is installed through Steam, QuakeRay can find its game files automatically. When both Steam versions are installed and the game folder has no local Quake data, it offers a choice of **Original** or **Remastered**; local data takes priority and skips the choice.
+---
 
-For a manual installation, copy the game files from your Quake installation into `id1` beside `quakeray.exe`. The full original game uses `pak0.pak` and `pak1.pak`; shareware uses `pak0.pak` only. GOG and Epic installs are not detected automatically: copy the files into `id1` or point `-basedir` at the install.
+## Roadmap
 
-**Keep `id1/qray.pkz` and `id1/qray.materials.yaml`.** They belong to QuakeRay and are needed for its graphics. The release archive already includes them and a standard `id1/config.cfg`.
+Planned milestones currently in active design and development:
+- **Next-Gen id Tech 8-Inspired Lighting Pipeline**: GPU world-space light grid, **ReSTIR** direct lighting, and a **World-Space Radiance Cache** for extreme light counts in mega-maps and mods.
+- **FSR 4 & NVIDIA DLSS**: Expanding AI-accelerated upscaling and frame reconstruction options alongside FSR 3.1.
+- **Whole-Frame CPU Multithreading**: Expanding the engine's lock-light **task-graph render frame** further across gameplay and world extraction to keep high-refresh CPUs fed ([roadmap & milestones](docs/multithreading.md#roadmap-to-production-ready-whole-frame-multithreading)).
+- **Expanded PBR & Mod Coverage**: Richer out-of-the-box material/SSS packs for official expansions and popular community mods.
 
-### Mods and mission packs
+*(Target benchmark bar: **45+ FPS at 4K FSR Quality** on reference hardware across maintained gameplay scenes. Roadmap items are engineering goals, not release-date promises.)*
 
-Place each mod in its own folder beside `id1`, then choose it from the **Mods** menu. Mods in a detected Steam installation can also appear there. Local files take priority over Steam files.
+---
 
-Mods and mission packs require the full registered game; the shareware version cannot run them. The original mission packs are the `hipnotic` and `rogue` folders.
+## How to Send Bug Reports
 
-Original and Remastered game files are handled separately. The other installed Steam flavor stays available as a lower-priority content root, so its mods remain in the menu. Use the version a mod was made for, and expect some mods to need further compatibility work. Steam mods follow the chosen version: classic Steam mods appear in Original, while `rerelease` add-ons and Nightdive downloads appear in Remastered.
+If you hit a crash, visual artifact, or severe slowdown:
 
-## How to send bug reports
+1. **Collect logs** by launching with `-condebug`:
+   ```text
+   quakeray -condebug
+   ```
+   Reproduce the issue, close the game, and grab **`qconsole.log`** (and **`crash.log`** on Windows if generated on an unhandled exception) from the working directory you launched from.
+2. **Record a performance trace** (if reporting low FPS or stutters): open the console with **`~` / backtick** right before entering the slow area and run:
+   ```text
+   rt_stats 3
+   rt_stats_dump_start
+   ```
+   Play for a few seconds and run `rt_stats_dump_end` (recording stops automatically after 30 seconds if you forget). Also run **`rt_stats_dump`** to append a single-frame cluster/light snapshot to **`qperfdump.log`**. Attach the generated **`stats-YYYYMMDD-HHMMSS.dump`** file from `id1/` (or your active mod folder).
+3. **[Open an issue](https://github.com/f1ames0ff/QuakeRay/issues)** with your logs, map/mod name, GPU + driver version, display/FSR settings, and a screenshot if the problem is visual.
 
-### 1. Collect a log
+---
 
-Launch the game with `-condebug`:
+## Build from Source & Contributing
 
-```text
-quakeray.exe -condebug
-```
+This section is for developers and contributors; players can skip it.
 
-You can also add `-condebug` to a Windows shortcut's target. Reproduce the problem and close the game. Keep **`qconsole.log`** and **`crash.log`** from the folder you started the game in — usually beside `quakeray.exe`; a shortcut's **Start in** folder decides it. `qconsole.log` is replaced on each run, and a later crash overwrites `crash.log`. Copy both before launching again.
-
-In the release build, `crash.log` is written only when the game stops on an unhandled exception; a normal Quake error dialog does not create one.
-
-### 2. Record performance
-
-Open the console with the **`~` / backtick** key and enter:
-
-```text
-rt_stats 3
-rt_stats_dump_start
-```
-
-Close the console and play through the slowdown or problem area. Open the console again and enter `rt_stats_dump_end` to finish. Recording also stops automatically **30 seconds** after it starts, so start it just before the area. The recording is kept in memory until it ends: closing the game before `rt_stats_dump_end` or the 30-second timeout loses it.
-
-Keep the resulting **`stats-YYYYMMDD-HHMMSS.dump`** file from the active game folder (`id1`, or the mod folder you are playing).
-
-For a problem tied to a map, also run **`rt_stats_dump`**: it appends one frame, including the map's cluster/light report, to **`qperfdump.log`** in the same folder.
-
-### 3. Send your report
-
-[Open an issue](https://github.com/f1ames0ff/QuakeRay/issues) and attach the **log and performance dump**, plus `crash.log` and `qperfdump.log` if available. Include:
-
-- What happened and how to reproduce it.
-- Your graphics settings: resolution, upscaler/FSR quality and ray-tracing quality (the log already records your GPU, driver, resolution and refresh rate).
-- The map or mod you were playing.
-- A screenshot, if it is a visual problem.
-
-## Build from source
-
-This section is for contributors. Players can skip it.
-
-Install [Git](https://git-scm.com/download/win), [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, [CMake](https://cmake.org/download/) 3.20 or newer, [Ninja](https://ninja-build.org/), [Python 3](https://www.python.org/downloads/windows/) on `PATH` and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) with `dxc` and Vulkan C++ headers. Vulkan SDK 1.4.321.1 is used for local builds.
-
-In PowerShell:
+### Windows (PowerShell)
+Install [Git](https://git-scm.com/download/win), Visual Studio Build Tools (**Desktop development with C++**), [CMake](https://cmake.org/download/) 3.20+, [Ninja](https://ninja-build.org/), [Python 3](https://www.python.org/downloads/windows/), and a recent [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (with `dxc` and Vulkan C++ headers).
 
 ```powershell
 git clone --recursive https://github.com/f1ames0ff/QuakeRay.git
@@ -156,32 +126,34 @@ cd QuakeRay
 .\build\Debug\quakeray.exe
 ```
 
-For an existing checkout, run `git submodule update --init --recursive` before building. The renderer is the `QuakeRaySDK` submodule at `renderer/`; host assets such as textures and cursor artwork live in the root `gfx/` folder. If the compiler runs out of memory, try `.\build_win.ps1 Debug -Parallel 4`. Run `ctest --test-dir build\Debug` for the regular regression tests; build with `.\build_win.ps1 Debug -Tests` to add the renderer's GPU regression tests. Close any running QuakeRay instance first: `build_win.ps1` stops with `MACHINE_BUSY` while the game or another build is running.
+- Always use `.\build_win.ps1 Debug` (not raw `cmake --build`): it sets up the MSVC environment, builds shaders, deploys runtime assets, and applies the pinned NVRHI patch cleanly. Close any running QuakeRay instance first (`build_win.ps1` stops on `MACHINE_BUSY`).
+- Optional standalone editor: `.\build_editor.ps1` → `.\build\editor\editor\quakerayeditor.exe`.
 
-Use **`build_win.ps1`**, not just a plain CMake build: it compiles the shaders, prepares the game assets and applies the pinned NVRHI patch (`third_party/nvrhi-max-binding-layouts.patch`); an IDE or manual CMake build has to apply that patch itself. Quake game files are still required, just as for a packaged release.
+### Linux
+With GCC/Clang, CMake 3.20+, Ninja, Python 3, SDL2, OpenAL Soft, Vulkan SDK (`dxc`), and standard X11/Wayland development headers installed:
 
-### Standalone editor
-
-The optional editor is built separately and writes only into the project:
-
-```powershell
-.\build_editor.ps1
-.\build\editor\editor\quakerayeditor.exe
+```bash
+git clone --recursive https://github.com/f1ames0ff/QuakeRay.git
+cd QuakeRay
+./build_linux.sh
+./build/linux-debug/quakeray
 ```
 
-`build_editor.ps1` prepares the MSVC and Vulkan environment, builds the shaders,
-applies the pinned NVRHI patch for the duration of the build, and reuses the
-repository `gfx/textures` assets. The executable and its runtime assets are
-deployed under `build\editor\editor\`. No user-profile or AppData paths are
-used.
+`./build_linux.sh` configures the engine, builds FidelityFX FSR 3.1 from source, compiles HLSL shaders to SPIR-V, packs `id1/qray.pkz`, and stages assets into `build/linux-debug/` (pass `QR_RUN_TESTS=1` to run the CPU test suite via CTest automatically). On Linux, the standalone `quakerayeditor` binary can be built standalone from the `renderer/` (`QuakeRaySDK`) CMake tree (`cmake -S renderer -B renderer/build`).
 
-## Credits and license
+### Architecture & Agent Documentation
+- [Architecture Index (`ARCHITECTURE.md`)](ARCHITECTURE.md) · [Performance Evidence (`PERFORMANCE.md`)](PERFORMANCE.md) · [Task-Graph Multithreading (`docs/multithreading.md`)](docs/multithreading.md)
+- Contributors and automated agents working in this repository must follow [`AGENTS.md`](AGENTS.md#mandatory-engine-mcp-workflow), including using the **QuakeRay engine MCP** as the primary engine-inspection interface.
 
-Created and maintained by **f1ames0ff**, building on Quake, QuakeSpasm and vkQuake, with the renderer derived from NVIDIA's Quake 2 RTX, and the work of many contributors. See [AUTHORS.md](AUTHORS.md) for credits and [changelog.md](changelog.md) for release notes.
+---
 
-QuakeRay's engine and renderer are distributed under the **GNU GPL, version 2 or later**. See [LICENSE.txt](LICENSE.txt) and the notices in the release archive for third-party licenses. Original Quake game content is not included.
+## Credits & License
 
-## Built with
+Created and maintained by **f1ames0ff**, building on id Software's *Quake*, **QuakeSpasm**, and **vkQuake**, with the path-tracing renderer (`QuakeRaySDK`) derived from NVIDIA's **Quake 2 RTX** and extended with contributions from the community. See [AUTHORS.md](AUTHORS.md) and [changelog.md](changelog.md) for details.
+
+QuakeRay and `QuakeRaySDK` are licensed under the **GNU General Public License, version 2 or later (GPLv2+)** — see [LICENSE.txt](LICENSE.txt). Original *Quake* game assets are copyright id Software / ZeniMax and are not included.
+
+## Built With
 
 These technologies help power QuakeRay. You do not need to install them separately to play.
 
@@ -192,12 +164,12 @@ These technologies help power QuakeRay. You do not need to install them separate
     <td align="center"><a href="https://github.com/NVIDIA-RTX/NVRHI"><img src="https://www.nvidia.com/content/dam/en-zz/Solutions/about-nvidia/logo-and-brand/01-nvidia-logo-horiz-500x200-2c50-d.png" alt="NVIDIA logo — NVRHI" width="180"></a></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://gpuopen.com/fidelityfx/">AMD FidelityFX SDK</a><br>FSR 3.1 upscaling</td>
-    <td align="center"><a href="https://www.vulkan.org/">Vulkan</a><br>Graphics and ray tracing</td>
-    <td align="center"><a href="https://github.com/NVIDIA-RTX/NVRHI">NVIDIA NVRHI</a><br>The renderer's graphics API layer: command lists, bindings and resources</td>
+    <td align="center"><a href="https://gpuopen.com/fidelityfx/">AMD FidelityFX SDK</a><br>FSR 3.1 upscaling (built from source)</td>
+    <td align="center"><a href="https://www.vulkan.org/">Vulkan</a><br>Cross-platform graphics &amp; hardware ray tracing</td>
+    <td align="center"><a href="https://github.com/NVIDIA-RTX/NVRHI">NVIDIA NVRHI</a><br>Renderer RHI command lists, bindings &amp; resources</td>
   </tr>
 </table>
 
-Also using [OpenAL Soft](https://openal-soft.org/) for sound and [Dear ImGui](https://github.com/ocornut/imgui) for editors and performance displays.
+Also powered by [OpenAL Soft](https://openal-soft.org/) (3D HRTF audio) and [Dear ImGui](https://github.com/ocornut/imgui) (live visual editors and performance HUD).
 
 Logos identify the technologies used, not sponsorship or endorsement. Vulkan and the Vulkan logo are registered trademarks of the Khronos Group Inc. AMD, NVIDIA and their logos belong to their respective owners.

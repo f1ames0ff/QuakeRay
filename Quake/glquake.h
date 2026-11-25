@@ -609,6 +609,12 @@ void RT_GetAcidColor (float color[3]);
 void RT_UpdateSunEditor (void);
 // The color the procedural clouds are composited over the sky with.
 void RT_GetSkyCloudsColor (float color[3]);
+// The tint color of the procedural moon and moonlight.
+void RT_GetMoonColor (float color[3]);
+// Computes unit vectors pointing toward the sun and moon plus diurnal star rotation.
+void RT_ComputeCelestialFrame (double time_sec, vec3_t sun_dir, vec3_t moon_dir, float *celestial_rot_rad);
+// Evaluates ground-level atmospheric transmittance for a unit direction toward the sun.
+void RT_EvalSunGroundTransmittance (const vec3_t sun_dir, vec3_t out_trans);
 // The tint every light source is multiplied by (see RT_FIXUP_LIGHT_INTENSITY).
 void RT_GetLightColor (float color[3]);
 // The color a light starts from before its own color and the tint are applied.
