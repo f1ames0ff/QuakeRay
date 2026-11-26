@@ -7,3 +7,4 @@
 [submodule "renderer"]
 	path = renderer
 	url = https://github.com/f1ames0ff/QuakeRaySDK.git
+	branch = main
