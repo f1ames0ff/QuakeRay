@@ -96,6 +96,7 @@ typedef struct gltexture_s
 	float                rtssscolor[3];
 	float                rtsssradius;
 	float                rtsssstrength;
+	float                rtparallaxscale;
 	float                rtuvscale[2];
 	float                rtuvoffset[2];
 	qboolean             rtemissive;

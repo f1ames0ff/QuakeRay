@@ -85,6 +85,7 @@ typedef struct rt_material_s {
     char source_file[MAX_QPATH];
     char filename_base[MAX_QPATH];
     char filename_normals[MAX_QPATH];
+    char filename_height[MAX_QPATH];
     char filename_emissive[MAX_QPATH];
     char filename_overlay[MAX_QPATH];
     char filename_gloss[MAX_QPATH];
@@ -92,6 +93,7 @@ typedef struct rt_material_s {
     float    texture_scale_u, texture_scale_v;
     float    texture_offset_u, texture_offset_v;
     float bump_scale;
+    float parallax_scale;
     float roughness_override;
     float metalness_factor;
     float emissive_factor;
@@ -141,6 +143,9 @@ typedef struct rt_material_s {
     qboolean has_sss_blocks;
     float    sss_threshold;
     float    sss_feather;
+    qboolean sss_enabled;
+    qboolean emissive_enabled;
+    qboolean gloss_enabled;
     qboolean valid;
 } rt_material_t;
 
@@ -197,6 +202,7 @@ enum {
     RT_MAT_TEX_OVERLAY,
     RT_MAT_TEX_GLOSS,
     RT_MAT_TEX_SSS,
+    RT_MAT_TEX_HEIGHT,
 };
 
 byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int *outHeight);

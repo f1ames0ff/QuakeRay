@@ -163,6 +163,7 @@ enum
 {
 	PARAM_BASE,     // texture_base
 	PARAM_NORMALS,  // texture_normals
+	PARAM_HEIGHT,   // texture_height
 	PARAM_EMISSIVE, // texture_emissive
 	PARAM_OVERLAY,  // texture_overlay
 	PARAM_GLOSS,    // texture_gloss
@@ -172,6 +173,7 @@ enum
 	PARAM_TOFFS_U,  // texture_offset_u
 	PARAM_TOFFS_V,  // texture_offset_v
 	PARAM_BUMP,
+	PARAM_PARALLAX,
 	PARAM_ROUGH,
 	PARAM_METAL,
 	PARAM_BASEF,
@@ -217,6 +219,8 @@ static const struct qre_param_s
 	                     "The diffuse texture. NONE keeps the map's own; an authored file replaces it." },
 	[PARAM_NORMALS]  = { NULL, "texture_normals",  QRE_T_TEXT,  0, 0, 0,
 	                     "Per-pixel bump direction. Its alpha channel can drive metalness_from_normal_alpha." },
+	[PARAM_HEIGHT]   = { NULL, "texture_height",   QRE_T_TEXT,  0, 0, 0,
+	                     "Height map baked into normal alpha for Relief Parallax Occlusion Mapping (POM)." },
 	[PARAM_EMISSIVE] = { NULL, "texture_emissive", QRE_T_TEXT,  0, 0, 0,
 	                     "A luma mask image: what is bright in it is what the surface emits. Replaces luma." },
 	[PARAM_OVERLAY]  = { NULL, "texture_overlay",  QRE_T_TEXT,  0, 0, 0,
@@ -235,6 +239,8 @@ static const struct qre_param_s
 	                     "Vertical shift of every texture_* map, the pair of texture_offset_u." },
 	[PARAM_BUMP]     = { "Surface", "bump_scale",       QRE_T_FLOAT, 0, 4, 0.01f,
 	                     "How pronounced the normal map's bumps are. Needs texture_normals." },
+	[PARAM_PARALLAX] = { NULL, "parallax_scale",   QRE_T_FLOAT, 0, 0.15f, 0.005f,
+	                     "Relief POM depth scale (0 = off). Needs texture_normals and texture_height." },
 	[PARAM_ROUGH]    = { NULL, "roughness_override", QRE_T_FLOAT, 0, 1, 0.01f,
 	                     "Ignore the gloss map and pin the roughness (0..1); 0 clears the override and hands the roughness back to the gloss map. Mirror forces 0; glass keeps its override." },
 	[PARAM_METAL]    = { NULL, "metalness_factor", QRE_T_FLOAT, 0, 1, 0.01f,
@@ -1387,6 +1393,7 @@ static float QRE_GetLightShaftFloat (const rt_material_t *m, int param)
 	case PARAM_LSHAFTS_FALLOFF: return m->light_shafts_falloff;
 	case PARAM_SSS_STRENGTH:    return m->sss_strength;
 	case PARAM_SSS_RADIUS:      return m->sss_radius;
+	case PARAM_PARALLAX:        return m->parallax_scale;
 	default:                    return 0.0f;
 	}
 }
@@ -1458,6 +1465,7 @@ static const char *QRE_GetText (const rt_material_t *m, int param)
 	{
 	case PARAM_BASE:     return m->filename_base;
 	case PARAM_NORMALS:  return m->filename_normals;
+	case PARAM_HEIGHT:   return m->filename_height;
 	case PARAM_EMISSIVE: return m->filename_emissive;
 	case PARAM_OVERLAY:  return m->filename_overlay;
 	case PARAM_GLOSS:    return m->filename_gloss;
@@ -1482,6 +1490,9 @@ static void QRE_SetLightShaftFloat (rt_material_t *m, int param, float value)
 	case PARAM_SSS_RADIUS:
 		m->sss_radius = CLAMP (0.0f, value, 1.0f);
 		break;
+	case PARAM_PARALLAX:
+		m->parallax_scale = CLAMP (0.0f, value, 0.25f);
+		break;
 	default:                    break;
 	}
 }
@@ -1498,6 +1509,7 @@ static qboolean QRE_IsFullDirtyFloatParam (int param)
 	case PARAM_LSHAFTS_FALLOFF:
 	case PARAM_SSS_STRENGTH:
 	case PARAM_SSS_RADIUS:
+	case PARAM_PARALLAX:
 	case PARAM_TSCALE_U:
 	case PARAM_TSCALE_V:
 	case PARAM_TOFFS_U:
@@ -1861,6 +1873,7 @@ static void QRE_SetTextDirect (int g, int param, const char *value)
 	{
 	case PARAM_BASE:     q_strlcpy (m->filename_base, path, sizeof (m->filename_base)); break;
 	case PARAM_NORMALS:  q_strlcpy (m->filename_normals, path, sizeof (m->filename_normals)); break;
+	case PARAM_HEIGHT:   q_strlcpy (m->filename_height, path, sizeof (m->filename_height)); break;
 	case PARAM_EMISSIVE: q_strlcpy (m->filename_emissive, path, sizeof (m->filename_emissive)); break;
 	case PARAM_OVERLAY:  q_strlcpy (m->filename_overlay, path, sizeof (m->filename_overlay)); break;
 	case PARAM_GLOSS:    q_strlcpy (m->filename_gloss, path, sizeof (m->filename_gloss)); break;
@@ -4696,7 +4709,7 @@ static void QRE_EmissiveEditor (int g)
 			{
 				int feather = (int)(m->color_emissive[ci].feather + 0.5f);
 
-				if (QR_GUI_SliderInt ("luma_feather", &feather, 0, 16,
+				if (QR_GUI_SliderInt ("luma_feather", &feather, 0, 128,
 				                      "Softens this block's mask edge over this many pixels, extending it outward without dimming the pixels it selected."))
 				{
 					m->color_emissive[ci].feather = (float)feather;
@@ -4979,7 +4992,7 @@ static qboolean QRE_SssDrawBlock (int g, int ci)
 	{
 		int feather = (int)(m->sss_blocks[ci].feather + 0.5f);
 
-		if (QR_GUI_SliderInt ("sss_feather", &feather, 0, 16,
+		if (QR_GUI_SliderInt ("sss_feather", &feather, 0, 128,
 		                      "Softens this SSS block's mask edge over this many pixels."))
 		{
 			m->sss_blocks[ci].feather = (float)feather;
@@ -10487,6 +10500,25 @@ static void QRE_WriteLightShaftFields (FILE *f, const rt_material_t *m)
 		QRE_WriteFloatLine (f, "light_shafts_falloff", m->light_shafts_falloff);
 }
 
+static void QRE_WritePomAndSectionToggles (FILE *f, const rt_material_t *m)
+{
+	if (m->filename_height[0])
+	{
+		char line[MAX_QPATH + 32];
+
+		q_snprintf (line, sizeof (line), "    texture_height: %s\n", m->filename_height);
+		fputs (line, f);
+	}
+	if (m->parallax_scale > 0.0f)
+		QRE_WriteFloatLine (f, "parallax_scale", m->parallax_scale);
+	if (!m->emissive_enabled)
+		fputs ("    emissive_enabled: false\n", f);
+	if (!m->gloss_enabled)
+		fputs ("    gloss_enabled: false\n", f);
+	if (!m->sss_enabled)
+		fputs ("    sss_enabled: false\n", f);
+}
+
 // Writes one material entry. Only values that differ from the defaults are
 // emitted (plus texture paths and color flags), so the file stays readable and
 // matches the style it was loaded from.
@@ -10568,6 +10600,7 @@ static void QRE_WriteMaterial (FILE *f, const rt_material_t *m)
 	if (m->material_glass &&
 	    (m->glass_color[0] != 1.0f || m->glass_color[1] != 1.0f || m->glass_color[2] != 1.0f))
 		QRE_WriteColor (f, "glass_color", m->glass_color);
+	QRE_WritePomAndSectionToggles (f, m);
 	QRE_WriteSssFields (f, m);
 	if (m->exact_normals)
 		fprintf (f, "    exact_normals: true\n");

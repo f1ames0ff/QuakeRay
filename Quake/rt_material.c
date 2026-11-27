@@ -58,6 +58,8 @@
 #define RT_MAT_MAX_MATERIALS 2048
 #define RT_MAT_MAX_GLOBAL   RT_MAT_CAP_GLOBAL
 #define RT_MAT_MAX_MAP      RT_MAT_CAP_MAP
+#define RT_MAT_FEATHER_MAX  128.0f
+#define RT_MAT_PARALLAX_MAX 0.25f
 
 static rt_material_t rt_global_materials[RT_MAT_MAX_GLOBAL];
 static int rt_global_count = 0;
@@ -267,20 +269,25 @@ static void rt_mat_normalize_tex_path(const char *base, char *norm, size_t norm_
     *dst = '\0';
 }
 
-byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int *outHeight)
+static const char *rt_mat_tex_slot_path(const rt_material_t *mat, int which)
 {
-    const char *base = NULL;
     switch (which)
     {
-        case RT_MAT_TEX_BASE:     base = mat->filename_base; break;
-        case RT_MAT_TEX_NORMALS:  base = mat->filename_normals; break;
-        case RT_MAT_TEX_EMISSIVE: base = mat->filename_emissive; break;
-        case RT_MAT_TEX_OVERLAY:  base = mat->filename_overlay; break;
-        case RT_MAT_TEX_GLOSS:    base = mat->filename_gloss; break;
-        case RT_MAT_TEX_SSS:      base = mat->filename_sss; break;
-        default: return NULL;
+        case RT_MAT_TEX_BASE:     return mat->filename_base;
+        case RT_MAT_TEX_NORMALS:  return mat->filename_normals;
+        case RT_MAT_TEX_EMISSIVE: return mat->filename_emissive;
+        case RT_MAT_TEX_OVERLAY:  return mat->filename_overlay;
+        case RT_MAT_TEX_GLOSS:    return mat->filename_gloss;
+        case RT_MAT_TEX_SSS:      return mat->filename_sss;
+        case RT_MAT_TEX_HEIGHT:   return mat->filename_height;
+        default:                  return NULL;
     }
-    if (!base[0])
+}
+
+byte *RT_MAT_LoadTexture(const rt_material_t *mat, int which, int *outWidth, int *outHeight)
+{
+    const char *base = rt_mat_tex_slot_path(mat, which);
+    if (!base || !base[0])
     {
         return NULL;
     }
@@ -386,6 +393,10 @@ void RT_MAT_InitSubsurfaceDefaults(rt_material_t *mat)
     mat->has_sss_blocks = false;
     mat->sss_threshold = 0.02f;
     mat->sss_feather = 0.0f;
+    mat->sss_enabled = true;
+    mat->emissive_enabled = true;
+    mat->gloss_enabled = true;
+    mat->parallax_scale = 0.0f;
     for (int i = 0; i < RT_MAT_MAX_SSS_BLOCKS; i++)
         mat->sss_blocks[i] = (rt_sss_block_t){0};
 }
@@ -685,6 +696,32 @@ static float rt_mat_clamp_unit_float(const char *mat_name, const char *key, cons
     return v;
 }
 
+static void rt_mat_set_pbr_or_warn(rt_material_t *mat, const char *key, const char *value)
+{
+    if (!q_strcasecmp(key, "texture_height"))
+        q_strlcpy(mat->filename_height, value, sizeof(mat->filename_height));
+    else if (!q_strcasecmp(key, "parallax_scale"))
+    {
+        const float raw = (float)atof(value);
+        float       v   = (!isfinite(raw) || raw < 0.0f) ? 0.0f : raw;
+
+        if (v > RT_MAT_PARALLAX_MAX)
+            v = RT_MAT_PARALLAX_MAX;
+        if (!isfinite(raw) || v != raw)
+            Con_DWarning("RT mat: material '%s': parallax_scale '%s' is not in 0..0.25; using %.3g\n",
+                         mat->name, value, v);
+        mat->parallax_scale = v;
+    }
+    else if (!q_strcasecmp(key, "emissive_enabled"))
+        mat->emissive_enabled = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "gloss_enabled"))
+        mat->gloss_enabled = rt_mat_parse_bool(value);
+    else if (!q_strcasecmp(key, "sss_enabled"))
+        mat->sss_enabled = rt_mat_parse_bool(value);
+    else
+        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+}
+
 static void rt_mat_set_sss_or_warn(rt_material_t *mat, const char *key, const char *value)
 {
     if (!q_strcasecmp(key, "texture_sss"))
@@ -704,11 +741,11 @@ static void rt_mat_set_sss_or_warn(rt_material_t *mat, const char *key, const ch
     else if (!q_strcasecmp(key, "sss_threshold"))
         mat->sss_threshold = CLAMP(0.0f, (float)atof(value), 1.0f);
     else if (!q_strcasecmp(key, "sss_feather"))
-        mat->sss_feather = (float)(int)(CLAMP(0.0f, (float)atof(value), 16.0f) + 0.5f);
+        mat->sss_feather = (float)(int)(CLAMP(0.0f, (float)atof(value), RT_MAT_FEATHER_MAX) + 0.5f);
     else if (!q_strcasecmp(key, "sss"))
         rt_mat_add_sss_color_list(mat, value);
     else
-        Con_DWarning("RT mat: unknown attribute '%s' in material '%s'\n", key, mat->name);
+        rt_mat_set_pbr_or_warn(mat, key, value);
 }
 
 static void rt_mat_set_light_shaft_or_warn(rt_material_t *mat, const char *key, const char *value)
@@ -824,11 +861,11 @@ static void rt_mat_set_attribute(rt_material_t *mat, const char *key, const char
         {
             f = 0.0f;
         }
-        if (f > 16.0f)
+        if (f > RT_MAT_FEATHER_MAX)
         {
-            f = 16.0f;
+            f = RT_MAT_FEATHER_MAX;
         }
-        mat->color_emissive_feather = (float)(int)(CLAMP(0.0f, f, 16.0f) + 0.5f);
+        mat->color_emissive_feather = (float)(int)(CLAMP(0.0f, f, RT_MAT_FEATHER_MAX) + 0.5f);
     }
     else if (!q_strcasecmp(key, "light_color"))
         mat->has_light_color = rt_mat_parse_hex_color(value, mat->light_color);
@@ -1092,7 +1129,7 @@ static void rt_mat_parse_emissive_block_pair(rt_material_t *dest, void *block_pt
     }
     else if (!q_strcasecmp(kb, "feather"))
     {
-        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
+        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), RT_MAT_FEATHER_MAX);
         block->has_feather = true;
     }
     else if (!q_strcasecmp(kb, "emissive_factor") || !q_strcasecmp(kb, "factor"))
@@ -1136,7 +1173,7 @@ static void rt_mat_parse_sss_block_pair(rt_material_t *dest, void *block_ptr,
     }
     else if (!q_strcasecmp(kb, "feather"))
     {
-        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), 16.0f);
+        block->feather = CLAMP(0.0f, (float)(int)((float)atof(vb) + 0.5f), RT_MAT_FEATHER_MAX);
         block->has_feather = true;
     }
     else if (!q_strcasecmp(kb, "factor"))

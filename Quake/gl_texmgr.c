@@ -1450,6 +1450,7 @@ static byte *TexMgr_LoadMaterialTexture (const rt_material_t *mat, int which, in
 	case RT_MAT_TEX_OVERLAY:  path = mat->filename_overlay; break;
 	case RT_MAT_TEX_GLOSS:    path = mat->filename_gloss; break;
 	case RT_MAT_TEX_SSS:      path = mat->filename_sss; break;
+	case RT_MAT_TEX_HEIGHT:   path = mat->filename_height; break;
 	default:                  break;
 	}
 
@@ -1489,6 +1490,7 @@ static void TexMgr_ResetSubsurface (gltexture_t *glt)
 	glt->rtssscolor[2] = 0.2f;
 	glt->rtsssradius = 0.02f;
 	glt->rtsssstrength = 0.0f;
+	glt->rtparallaxscale = 0.0f;
 }
 
 static void TexMgr_ApplySubsurface (gltexture_t *glt, const rt_material_t *mat)
@@ -1498,11 +1500,24 @@ static void TexMgr_ApplySubsurface (gltexture_t *glt, const rt_material_t *mat)
 	VectorCopy (mat->sss_color, glt->rtssscolor);
 	glt->rtsssradius = mat->sss_radius;
 	glt->rtsssstrength = mat->sss_strength;
-	glt->rtsss = allowed && mat->sss_strength > 0.0f && mat->sss_radius > 0.0f;
+	glt->rtsss = mat->sss_enabled && allowed && mat->sss_strength > 0.0f && mat->sss_radius > 0.0f;
+}
+
+static void TexMgr_FillParallaxUpload (const gltexture_t *tx, QrGeometryUploadInfo *info)
+{
+	if (!tx || !info || tx->rtsss || tx->rtglass || tx->rtwater || !(tx->rtparallaxscale > 0.0f))
+		return;
+	if (info->visibilityType == QR_GEOMETRY_VISIBILITY_TYPE_SKY)
+		return;
+	if (info->passThroughType != QR_GEOMETRY_PASS_THROUGH_TYPE_OPAQUE &&
+	    info->passThroughType != QR_GEOMETRY_PASS_THROUGH_TYPE_ALPHA_TESTED)
+		return;
+	info->layerColors[2].data[2] = CLAMP (0.0f, tx->rtparallaxscale, 0.25f);
 }
 
 void TexMgr_FillSubsurfaceUpload (const gltexture_t *tx, QrGeometryUploadInfo *info)
 {
+	TexMgr_FillParallaxUpload (tx, info);
 	if (!tx || !tx->rtsss || !info)
 		return;
 	if (info->visibilityType == QR_GEOMETRY_VISIBILITY_TYPE_SKY)
@@ -1734,6 +1749,72 @@ static byte *TexMgr_BuildSssMaskBytes (const rt_material_t *mat, const byte *bas
 	return out;
 }
 
+static byte *TexMgr_LoadOptionalMaterialBuf (const rt_material_t *mat, int slot, qboolean enabled,
+                                             int tw, int th)
+{
+	int   w = 0, h = 0;
+	byte *raw;
+	byte *resized;
+
+	if (!enabled)
+		return NULL;
+	raw = TexMgr_LoadMaterialTexture (mat, slot, &w, &h);
+	if (!raw)
+		return NULL;
+	resized = (byte *)Mem_Alloc ((size_t)tw * (size_t)th * 4);
+	TexMgr_ResizeRgba (raw, w, h, resized, tw, th);
+	Mem_Free (raw);
+	return resized;
+}
+
+static float TexMgr_ResolvePixelRoughness (const gltexture_t *glt, const rt_material_t *mat,
+                                           const byte *glossBuf, const byte *roughBaseBuf,
+                                           float defaultRough, int i)
+{
+	if (glt->rtmirror && !glt->rtglass && !glt->rtwater)
+		return 0.0f;
+	if (!mat->gloss_enabled)
+		return defaultRough;
+	if (mat->has_roughness_override)
+		return mat->roughness_override;
+	if (glossBuf)
+		return 1.0f - glossBuf[i * 4] / 255.0f;
+	if (roughBaseBuf)
+		return roughBaseBuf[i * 4 + 3] / 255.0f;
+	return defaultRough;
+}
+
+static float TexMgr_ResolvePixelMetalness (const rt_material_t *mat, const byte *normBuf, int i)
+{
+	if (!mat->gloss_enabled || (!mat->has_metalness_factor && !mat->metalness_from_normal_alpha))
+		return 0.0f;
+	{
+		const float factor = mat->has_metalness_factor ? mat->metalness_factor : 1.0f;
+		if (mat->metalness_from_normal_alpha && normBuf)
+			return (normBuf[i * 4 + 3] / 255.0f) * factor;
+		return factor;
+	}
+}
+
+static byte TexMgr_ResolveNormalAlpha (const byte *sssMask, qboolean rtsss, qboolean isGlass,
+                                       byte glassAlpha, const byte *heightBuf, int i)
+{
+	if (sssMask)
+		return sssMask[i];
+	if (rtsss)
+		return 255;
+	if (isGlass)
+		return glassAlpha;
+	if (heightBuf)
+	{
+		const float lum = 0.299f * heightBuf[i * 4 + 0] +
+		                  0.587f * heightBuf[i * 4 + 1] +
+		                  0.114f * heightBuf[i * 4 + 2];
+		return (byte)CLAMP (0, (int)(lum + 0.5f), 255);
+	}
+	return 255;
+}
+
 static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned *albedoFallback, byte *fullbrightOverride)
 {
 	rt_material_t *mat = RT_MAT_Find (glt->name);
@@ -1781,7 +1862,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	glt->rthasmaterial = true;
 
-	glt->rtislight = mat->is_light;
+	glt->rtislight = mat->emissive_enabled && mat->is_light;
 	glt->rtlightstyles = mat->light_styles;
 
 	if (mat->has_light_color)
@@ -1818,26 +1899,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	const int th = glt->height;
 	const int npix = tw * th;
 
-	int bw = 0, bh = 0;
-	byte *baseTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_BASE, &bw, &bh);
-	int nw = 0, nh = 0;
-	byte *normTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_NORMALS, &nw, &nh);
-	int ew = 0, eh = 0;
-	byte *emisTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_EMISSIVE, &ew, &eh);
-	glt->rtemissivetex = (emisTex != NULL);
-	int gw = 0, gh = 0;
-	byte *glossTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_GLOSS, &gw, &gh);
+	const qboolean allowHeight = !mat->material_glass && !glt->rtwater && !glt->rtsss && mat->filename_height[0] != '\0';
+	byte *baseBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_BASE, true, tw, th);
+	byte *normBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_NORMALS, true, tw, th);
+	byte *heightBuf  = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_HEIGHT, allowHeight, tw, th);
+	byte *emisBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_EMISSIVE, mat->emissive_enabled, tw, th);
+	glt->rtemissivetex = (emisBuf != NULL);
+	byte *glossBuf   = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_GLOSS, mat->gloss_enabled, tw, th);
 	int lw = 0, lh = 0;
 	byte *overlayTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_OVERLAY, &lw, &lh);
 	int overlayPixels = 0;
 	unsigned overlayCovMax = 0;
 	unsigned long long overlayCovSum = 0;
-
-	byte *baseBuf = NULL, *normBuf = NULL, *emisBuf = NULL, *glossBuf = NULL, *overlayBuf = NULL;
-	if (baseTex) { baseBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (baseTex, bw, bh, baseBuf, tw, th); Mem_Free (baseTex); }
-	if (normTex) { normBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (normTex, nw, nh, normBuf, tw, th); Mem_Free (normTex); }
-	if (emisTex) { emisBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (emisTex, ew, eh, emisBuf, tw, th); Mem_Free (emisTex); }
-	if (glossTex) { glossBuf = (byte *)Mem_Alloc (npix * 4); TexMgr_ResizeRgba (glossTex, gw, gh, glossBuf, tw, th); Mem_Free (glossTex); }
+	byte *overlayBuf = NULL;
+	glt->rtparallaxscale = (heightBuf && mat->parallax_scale > 0.0f) ? CLAMP (0.0f, mat->parallax_scale, 0.25f) : 0.0f;
 	if (overlayTex)
 	{
 		const int ln = lw * lh;
@@ -1867,9 +1942,11 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (!baseBuf && !albedoFallback)
 	{
+		glt->rtparallaxscale = 0.0f;
 		TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, NULL);
 		TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, NULL);
 		if (normBuf) Mem_Free (normBuf);
+		if (heightBuf) Mem_Free (heightBuf);
 		if (emisBuf) Mem_Free (emisBuf);
 		if (glossBuf) Mem_Free (glossBuf);
 		if (overlayBuf) Mem_Free (overlayBuf);
@@ -1908,7 +1985,6 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	byte *rasterAlbedo = overlayBuf && mat->material_glass ? (byte *)Mem_Alloc (npix * 4) : NULL;
 
 	const float baseFactor = (mat->base_factor >= 0.0f) ? mat->base_factor : 1.0f;
-	const float roughOverride = mat->roughness_override;
 
 	/* The transparency of a glass material rides the alpha of the synthesized
 	   normal texture, the one channel the traced path reads but nothing else
@@ -1927,9 +2003,11 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	const qboolean isBrush = glt->owner && glt->owner->type == mod_brush;
 	const float defaultRough = isBrush ? CVAR_TO_FLOAT (rt_brush_rough) : CVAR_TO_FLOAT (rt_model_rough);
 	const qboolean engineAlpha = (glt->flags & TEXPREF_ALPHA) != 0 || mat->alpha_test;
+	const byte    *roughBaseBuf = (baseHasAlpha && !engineAlpha) ? baseBuf : NULL;
 
-	const qboolean has_luma_key = (mat->filename_emissive[0] != '\0');
-	const qboolean use_color_emissive = mat->has_color_emissive && mat->color_emissive_count > 0 && !has_luma_key;
+	const qboolean has_luma_key = mat->emissive_enabled && (mat->filename_emissive[0] != '\0');
+	const qboolean use_color_emissive = mat->emissive_enabled && mat->has_color_emissive && mat->color_emissive_count > 0 && !has_luma_key;
+	const byte *activeFullbright = mat->emissive_enabled ? fullbrightOverride : NULL;
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
@@ -2040,27 +2118,9 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			rasterAlbedo[i * 4 + 3] = albedo[i * 4 + 3];
 		}
 
-		float rough;
-		if (glt->rtmirror && !glt->rtglass && !glt->rtwater)
-			rough = 0.0f; // mirror has the last word; the panel locks the override
-		else if (mat->has_roughness_override)
-			rough = roughOverride;
-		else if (glossBuf)
-			rough = 1.0f - glossBuf[i * 4] / 255.0f;
-		else if (baseHasAlpha && !engineAlpha)
-			rough = baseBuf[i * 4 + 3] / 255.0f;
-		else
-			rough = defaultRough;
-
-		float metal = 0.0f;
-		if (mat->has_metalness_factor || mat->metalness_from_normal_alpha)
-		{
-			const float factor = mat->has_metalness_factor ? mat->metalness_factor : 1.0f;
-			if (mat->metalness_from_normal_alpha && normBuf)
-				metal = (normBuf[i * 4 + 3] / 255.0f) * factor;
-			else
-				metal = factor;
-		}
+		const float rough = TexMgr_ResolvePixelRoughness (glt, mat, glossBuf, roughBaseBuf,
+		                                                  defaultRough, i);
+		const float metal = TexMgr_ResolvePixelMetalness (mat, normBuf, i);
 
 		float emiss = 0.0f;
 		float emissRaw = 0.0f;
@@ -2070,13 +2130,13 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			emissRaw = (0.2126f * emisBuf[i * 4 + 0] + 0.7152f * emisBuf[i * 4 + 1] + 0.0722f * emisBuf[i * 4 + 2]) / 255.0f;
 			emiss = emissRaw * mat->emissive_factor;
 		}
-		if (colorEmis || fullbrightOverride)
+		if (colorEmis || activeFullbright)
 		{
 			const texmgr_emissive_texel_t composed = TexMgr_ComposeEmissiveTexel(
 				colorEmis != NULL, colorEmis ? colorEmis[i] : 0.0f,
 				colorRaw ? colorRaw[i] : 0.0f, colorBlend ? colorBlend[i] : 0,
-				fullbrightOverride != NULL,
-				fullbrightOverride ? fullbrightOverride[i * 4 + 2] / 255.0f : 0.0f,
+				activeFullbright != NULL,
+				activeFullbright ? activeFullbright[i * 4 + 2] / 255.0f : 0.0f,
 				(byte)emisBlendCode);
 
 			emiss = composed.emissive;
@@ -2154,7 +2214,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 			normal[i * 4 + 1] = 128;
 			normal[i * 4 + 2] = 255;
 		}
-		normal[i * 4 + 3] = sssMask ? sssMask[i] : (glt->rtsss ? 255 : glassAlpha);
+		normal[i * 4 + 3] = TexMgr_ResolveNormalAlpha (sssMask, glt->rtsss, mat->material_glass,
+		                                               glassAlpha, heightBuf, i);
 	}
 
 	if (overlayBuf && mat->material_glass)
@@ -2181,6 +2242,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	if (baseBuf) Mem_Free (baseBuf);
 	if (normBuf) Mem_Free (normBuf);
+	if (heightBuf) Mem_Free (heightBuf);
 	if (emisBuf) Mem_Free (emisBuf);
 	if (glossBuf) Mem_Free (glossBuf);
 	if (overlayBuf) Mem_Free (overlayBuf);
