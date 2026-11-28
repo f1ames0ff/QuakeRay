@@ -208,22 +208,53 @@ static void R_CreateSpriteVertices (entity_t *e, mspriteframe_t *frame, QrVertex
 R_DrawSpriteModel -- johnfitz -- rewritten: now supports all orientations
 =================
 */
+static void R_FillSpriteRasterInfo (QrRasterizedGeometryUploadInfo *info, const gltexture_t *tx, qboolean is_decal)
+{
+	const uint32_t uv_flag = RT_UV_TRANSFORM_ACTIVE (tx) ? QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM : 0;
+
+	if (is_decal && !(tx && tx->rtopaquealpha))
+	{
+		info->pipelineState =
+			QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+			QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE |
+			QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST |
+			uv_flag;
+		info->blendFuncSrc = 0;
+		info->blendFuncDst = 0;
+		return;
+	}
+
+	const uint32_t proxy_flag = is_decal ? 0 : QR_RASTERIZED_GEOMETRY_STATE_PARTICLE_SPRITE;
+	info->pipelineState =
+		QR_RASTERIZED_GEOMETRY_STATE_BLEND_ENABLE |
+		QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST |
+		proxy_flag |
+		uv_flag;
+
+	if (tx && tx->rtopaquealpha)
+	{
+		info->blendFuncSrc = QR_BLEND_FACTOR_ONE;
+		info->blendFuncDst = QR_BLEND_FACTOR_ONE;
+		return;
+	}
+
+	info->blendFuncSrc = (tx && (tx->flags & TEXPREF_PREMULTIPLY))
+		? QR_BLEND_FACTOR_ONE
+		: QR_BLEND_FACTOR_SRC_ALPHA;
+	info->blendFuncDst = QR_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+}
+
 void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 {
 	msprite_t      *psprite = (msprite_t *)e->model->extradata;
 	mspriteframe_t *frame = R_GetSpriteFrame (e);
 	gltexture_t    *tx = frame->gltexture;
 
-
     QrVertex vertices[4] = {0};
 	R_CreateSpriteVertices (e, frame, vertices);
 
-	qboolean is_decal = psprite->type == SPR_ORIENTED;
-	qboolean is_rasterized = is_decal;
-	rt_light_t *light_ov = tx ? RT_LIGHT_FindEmitter (tx->name, RT_GetSpriteModelUniqueId (entuniqueid)) : NULL;
-
-	if (tx && (tx->rtforcerasterize || (light_ov && light_ov->force_rasterize)))
-		is_rasterized = true;
+	const qboolean is_decal = psprite->type == SPR_ORIENTED;
+	const qboolean is_rasterized = !(tx && (tx->rtglass || tx->rtwater));
 
 	if (tx && tx->rthaslightcolor && tx->rtislight && RT_AllowFakeLights ())
 	{
@@ -263,14 +294,8 @@ void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e, int entuniqueid)
 			.texCoordScale = {tx ? tx->rtuvscale[0] : 1.0f, tx ? tx->rtuvscale[1] : 1.0f},
 			.texCoordOffset = {tx ? tx->rtuvoffset[0] : 0.0f, tx ? tx->rtuvoffset[1] : 0.0f},
 			.material = tx ? RT_RASTER_MATERIAL (tx) : QR_NO_MATERIAL,
-			.pipelineState = 
-			    QR_RASTERIZED_GEOMETRY_STATE_DEPTH_TEST | 
-			    QR_RASTERIZED_GEOMETRY_STATE_DEPTH_WRITE | 
-			    QR_RASTERIZED_GEOMETRY_STATE_ALPHA_TEST |
-			    (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_RASTERIZED_GEOMETRY_STATE_TEXCOORD_TRANSFORM : 0),
-			.blendFuncSrc = 0,
-			.blendFuncDst = 0,
 		};
+		R_FillSpriteRasterInfo (&info, tx, is_decal);
 
 		QrResult r = qrUploadRasterizedGeometry (vulkan_globals.instance, &info, NULL, NULL);
 		QR_CHECK (r);

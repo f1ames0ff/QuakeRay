@@ -284,8 +284,10 @@ float GL_GetCameraNear (float radfovx, float radfovy)
     // distance is where "closer" ends: the weapon keeps its picture on screen only if
     // the clip comes along with it, by the same factor.
     const float viewmscale = CVAR_TO_FLOAT (rt_viewm_scale) > 0 ? CVAR_TO_FLOAT (rt_viewm_scale) : 1.0f;
+    const float min_near = q_max (1.0f * viewmscale, 0.25f);
+    const float max_near = q_max (min_near, NEARCLIP * viewmscale);
 
-    return CLAMP (0.5f * viewmscale, d * viewmscale, NEARCLIP * viewmscale);
+    return CLAMP (min_near, d * viewmscale, max_near);
 }
 
 float GL_GetCameraFar (void)

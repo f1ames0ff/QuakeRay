@@ -87,6 +87,7 @@ typedef struct gltexture_s
 	qboolean             rtexactnormals;
 	qboolean             rtforcerasterize;
 	qboolean             rtalphatest;
+	qboolean             rtopaquealpha;
 	qboolean             rtglass;
 	float                rtglassior;
 	float                rtglassthickness;
