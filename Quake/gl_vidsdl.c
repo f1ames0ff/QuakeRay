@@ -295,9 +295,9 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_sky_clouds_thickness, "90000") \
 	\
 	CVAR_DEF_T (rt_brush_metal, "0.0") \
-	CVAR_DEF_T (rt_brush_rough, "1.0") \
+	CVAR_DEF_T (rt_brush_rough, "0.8") \
 	CVAR_DEF_T (rt_model_metal, "0.0") \
-	CVAR_DEF_T (rt_model_rough, "1.0") \
+	CVAR_DEF_T (rt_model_rough, "0.8") \
     \
 	CVAR_DEF_T (rt_normalmap_stren, "1") \
 	CVAR_DEF_T (rt_emis_mapboost, "30") \
@@ -397,7 +397,7 @@ CVAR_DEF_T (rt_dyn_blas_update, "0") \
 	CVAR_DEF_T (rt_tonemap_desat, "0.0") \
 	CVAR_DEF_T (rt_tonemap_chroma, "0.8") \
 	CVAR_DEF_T (rt_contrast, "0.9") \
-	CVAR_DEF_T (rt_tonemap, "1") \
+	CVAR_DEF_T (rt_tonemap, "4") \
 	\
 	CVAR_DEF_T (rt_ef_crt, "0") \
 	CVAR_DEF_T (rt_vignette, "0.5") \
@@ -3619,6 +3619,24 @@ static void GL_InitInstance (void)
 	}
 }
 
+static atomic_uint32_t vid_vsync_fallback_pending;
+static void VID_SubmitPendingScreenshot (void);
+static void VID_PollAsyncScreenshot (void);
+static void VID_CleanupReadbackBuffer (void);
+
+static QrResult VID_StartFrameWithFallback (QrStartFrameInfo *info)
+{
+	QrResult r = qrStartFrame (vulkan_globals.instance, info);
+	if (r == QR_FEATURE_UNAVAILABLE && info->presentMode != QR_PRESENT_MODE_VSYNC)
+	{
+		Atomic_StoreUInt32 (&vid_vsync_fallback_pending, 1);
+		info->presentMode = QR_PRESENT_MODE_VSYNC;
+		info->maxFrameLatency = 1;
+		r = qrStartFrame (vulkan_globals.instance, info);
+	}
+	return r;
+}
+
 /*
 =================
 GL_BeginRenderingTask
@@ -3635,7 +3653,7 @@ void GL_BeginRenderingTask (void *unused)
 	};
 
 	const double prof_begin = RT_Prof_Begin ();
-	QrResult r = qrStartFrame (vulkan_globals.instance, &info);
+	QrResult r = VID_StartFrameWithFallback (&info);
 	RT_Prof_End (RT_PROF_BEGIN, prof_begin);
 	QR_CHECK (r);
 
@@ -3679,6 +3697,15 @@ void GL_SynchronizeEndRenderingTask (void)
 		Task_Join (prev_acquire_rendering_task, SDL_MUTEX_MAXWAIT);
 		prev_acquire_rendering_task = INVALID_TASK_HANDLE;
 	}
+
+	if (Atomic_LoadUInt32 (&vid_vsync_fallback_pending))
+	{
+		Atomic_StoreUInt32 (&vid_vsync_fallback_pending, 0);
+		Con_Warning ("Present mode unavailable; falling back to VSync\n");
+		Cvar_SetValueQuick (&vid_vsync, (float)VID_VSYNC_ON);
+	}
+
+	VID_PollAsyncScreenshot ();
 }
 
 /*
@@ -3964,8 +3991,10 @@ static void ResolutionToQray (QrDrawFrameRenderResolutionParams *dst, const QrEx
 		float scale = (float)CVAR_TO_INT32 (rt_renderscale) / 100.0f;
 		scale = CLAMP (scale, 0.2f, 1.0f);
 
-		dst->customRenderSize.width = (uint32_t)(scale * winsize.width);
-		dst->customRenderSize.height = (uint32_t)(scale * winsize.height);
+		const uint32_t scaled_w = (uint32_t)(scale * (float)winsize.width);
+		const uint32_t scaled_h = (uint32_t)(scale * (float)winsize.height);
+		dst->customRenderSize.width = q_max (2u, scaled_w & ~1u);
+		dst->customRenderSize.height = q_max (2u, scaled_h);
 		dst->pPixelizedRenderSize = NULL;
 
 		return;
@@ -4119,6 +4148,18 @@ static void GL_ResolveVolumetricSkySource (qboolean     usePhysicalSky,
 GL_BuildEndRenderingSnapshot
 =================
 */
+static float VID_EffectiveRayLength (void)
+{
+	if (!cl.worldmodel)
+		return 10000.0f;
+
+	const float dx = cl.worldmodel->maxs[0] - cl.worldmodel->mins[0];
+	const float dy = cl.worldmodel->maxs[1] - cl.worldmodel->mins[1];
+	const float dz = cl.worldmodel->maxs[2] - cl.worldmodel->mins[2];
+	const float diag = sqrtf (dx * dx + dy * dy + dz * dz);
+	return q_max (10000.0f, diag * 2.5f);
+}
+
 static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 {
 	const QrExtent2D winsize = {.width = vid.width, .height = vid.height};
@@ -4513,8 +4554,9 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		debug_params.drawFlags |= QR_DEBUG_DRAW_PASS_STATS_BIT;
 	}
 
+	const float ray_length = VID_EffectiveRayLength ();
 	float cameranear = GL_GetCameraNear (DEG2RAD (r_fovx), DEG2RAD (r_fovy));
-	float camerafar = GL_GetCameraFar ();
+	float camerafar = q_max (GL_GetCameraFar (), ray_length);
 
 	// The editor, photocam and observer run on the client clock: the traced
 	// water warp and the cloud drift follow it while one of them owns the view,
@@ -4528,7 +4570,7 @@ static gl_draw_frame_snapshot_t *GL_BuildEndRenderingSnapshot (void)
 		.fovYRadians = DEG2RAD (r_fovy),
 		.cameraNear = cameranear,
 		.cameraFar = camerafar,
-		.rayLength = 10000.0f,
+		.rayLength = ray_length,
 		.rayCullMaskWorld = QR_DRAW_FRAME_RAY_CULL_WORLD_0_BIT | QR_DRAW_FRAME_RAY_CULL_WORLD_1_BIT | QR_DRAW_FRAME_RAY_CULL_SKY_BIT,
 		.disableRayTracedGeometry = false,
 		.disableRasterization = false,
@@ -4592,6 +4634,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	assert (parms->context != NULL);
 	gl_draw_frame_snapshot_t *snapshot = parms->context->snapshot;
 	assert (snapshot != NULL);
+
+	VID_SubmitPendingScreenshot ();
 
 	double prof_start = RT_Prof_Begin ();
 	QrResult r = qrDrawFrame (vulkan_globals.instance, &snapshot->info);
@@ -4663,11 +4707,13 @@ void VID_Shutdown (void)
 
 		if (vulkan_globals.instance != QR_NULL_HANDLE)
 		{
+			GL_SynchronizeEndRenderingTask ();
 		    QR_GUI_Shutdown ();
 		    RT_MAT_Shutdown ();
 		    RT_LIGHT_Shutdown ();
 		    QrResult r = qrDestroyInstance (vulkan_globals.instance);
 			QR_CHECK (r);
+			VID_CleanupReadbackBuffer ();
 
 			Mem_Free (vulkan_globals.primary_cb_context.batch_indices);
 			Mem_Free (vulkan_globals.primary_cb_context.batch_verts);
@@ -6102,18 +6148,211 @@ SCREEN SHOTS
 ==============================================================================
 */
 
+typedef enum
+{
+	SCR_FMT_PNG = 0,
+	SCR_FMT_TGA = 1,
+	SCR_FMT_JPG = 2
+} scr_shot_fmt_t;
+
+static struct
+{
+	qboolean       queued;
+	qboolean       retried;
+	uint64_t       request_id;
+	uint32_t       width;
+	uint32_t       height;
+	uint32_t       row_pitch;
+	scr_shot_fmt_t fmt;
+	char           name[MAX_OSPATH];
+	QrResult       submit_error;
+	byte          *buf;
+	uint64_t       buf_cap;
+} scr_readback = {0};
+
+static qboolean SCR_ParseScreenshotFormat (const char *ext, scr_shot_fmt_t *out_fmt)
+{
+	if (!ext || !ext[0] || !q_strcasecmp (ext, "png"))
+	{
+		*out_fmt = SCR_FMT_PNG;
+		return true;
+	}
+	if (!q_strcasecmp (ext, "tga"))
+	{
+		*out_fmt = SCR_FMT_TGA;
+		return true;
+	}
+	if (!q_strcasecmp (ext, "jpg"))
+	{
+		*out_fmt = SCR_FMT_JPG;
+		return true;
+	}
+	return false;
+}
+
+static qboolean SCR_SanitizeScreenshotName (const char *arg, char *out, size_t out_sz, scr_shot_fmt_t *out_fmt)
+{
+	if (!arg || !arg[0] || arg[0] == '.' || strstr (arg, "..") ||
+	    strchr (arg, '/') || strchr (arg, '\\') || strchr (arg, ':'))
+		return false;
+
+	const char *dot = strrchr (arg, '.');
+	const char *ext = dot ? (dot + 1) : "";
+	if (!SCR_ParseScreenshotFormat (ext, out_fmt))
+		return false;
+
+	if (dot)
+		q_strlcpy (out, arg, out_sz);
+	else
+		q_snprintf (out, out_sz, "%s.png", arg);
+	return strlen (out) < out_sz;
+}
+
+static qboolean SCR_WriteReadbackImage (void)
+{
+	const uint32_t w = scr_readback.width;
+	const uint32_t h = scr_readback.height;
+	const size_t   row_bytes = (size_t)w * 4u;
+	byte          *packed = (byte *)Mem_Alloc ((size_t)h * row_bytes);
+
+	for (uint32_t y = 0; y < h; y++)
+	{
+		const byte *src = scr_readback.buf + (size_t)y * (size_t)scr_readback.row_pitch;
+		byte       *dst = packed + (size_t)y * row_bytes;
+		for (uint32_t x = 0; x < w; x++)
+		{
+			dst[x * 4u + 0u] = src[x * 4u + 0u];
+			dst[x * 4u + 1u] = src[x * 4u + 1u];
+			dst[x * 4u + 2u] = src[x * 4u + 2u];
+			dst[x * 4u + 3u] = 255u;
+		}
+	}
+
+	qboolean ok = false;
+	if (scr_readback.fmt == SCR_FMT_TGA)
+		ok = Image_WriteTGA (scr_readback.name, packed, (int)w, (int)h, 32, true);
+	else if (scr_readback.fmt == SCR_FMT_JPG)
+		ok = Image_WriteJPG (scr_readback.name, packed, (int)w, (int)h, 32, 90, true);
+	else
+		ok = Image_WritePNG (scr_readback.name, packed, (int)w, (int)h, 32, true);
+
+	Mem_Free (packed);
+	return ok;
+}
+
+static void VID_SubmitPendingScreenshot (void)
+{
+	if (!scr_readback.queued || scr_readback.request_id != 0 || vulkan_globals.instance == QR_NULL_HANDLE)
+		return;
+
+	uint32_t w = 0, h = 0, row_pitch = 0;
+	uint64_t buf_size = 0;
+	QrResult r = qrGetFrameReadbackRequirements (
+		vulkan_globals.instance, QR_FRAME_READBACK_FORMAT_RGBA8_UNORM, QR_TRUE,
+		&w, &h, &row_pitch, &buf_size);
+	if (r == QR_FRAME_NOT_READY)
+		return;
+	if (r != QR_SUCCESS || buf_size == 0)
+	{
+		scr_readback.submit_error = (r != QR_SUCCESS) ? r : QR_WRONG_ARGUMENT;
+		scr_readback.queued = false;
+		return;
+	}
+
+	if (buf_size > scr_readback.buf_cap)
+	{
+		scr_readback.buf = (byte *)Mem_Realloc (scr_readback.buf, (size_t)buf_size);
+		scr_readback.buf_cap = buf_size;
+	}
+
+	QrFrameReadbackInfo rb = {
+		.width = w,
+		.height = h,
+		.rowPitch = row_pitch,
+		.bufferSize = buf_size,
+		.format = QR_FRAME_READBACK_FORMAT_RGBA8_UNORM,
+		.includeUi = QR_TRUE,
+		.pDst = scr_readback.buf,
+		.frameId = QR_FRAME_ID_LATEST,
+	};
+	uint64_t req_id = 0;
+	r = qrRequestFrameReadback (vulkan_globals.instance, &rb, &req_id);
+	if (r == QR_FRAME_NOT_READY || r == QR_READBACK_BUSY)
+		return;
+	if (r != QR_SUCCESS)
+	{
+		scr_readback.submit_error = r;
+		scr_readback.queued = false;
+		return;
+	}
+
+	scr_readback.request_id = req_id;
+	scr_readback.width = w;
+	scr_readback.height = h;
+	scr_readback.row_pitch = row_pitch;
+	scr_readback.queued = false;
+}
+
+static void VID_PollAsyncScreenshot (void)
+{
+	if (scr_readback.submit_error != QR_SUCCESS)
+	{
+		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (scr_readback.submit_error));
+		scr_readback.submit_error = QR_SUCCESS;
+		scr_readback.retried = false;
+	}
+
+	if (scr_readback.request_id == 0 || vulkan_globals.instance == QR_NULL_HANDLE)
+		return;
+
+	QrBool32 done = QR_FALSE;
+	QrResult r = qrGetFrameReadbackStatus (vulkan_globals.instance, scr_readback.request_id, &done);
+	if (r == QR_SUCCESS && !done)
+		return;
+
+	if (r != QR_SUCCESS)
+	{
+		scr_readback.request_id = 0;
+		if (!scr_readback.retried)
+		{
+			scr_readback.retried = true;
+			scr_readback.queued = true;
+			return;
+		}
+		scr_readback.retried = false;
+		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (r));
+		return;
+	}
+
+	scr_readback.request_id = 0;
+	scr_readback.retried = false;
+	if (SCR_WriteReadbackImage ())
+		Con_Printf ("Wrote %s/%s\n", com_gamedir, scr_readback.name);
+	else
+		Con_Printf ("screenshot: couldn't write %s/%s\n", com_gamedir, scr_readback.name);
+}
+
+static void VID_CleanupReadbackBuffer (void)
+{
+	scr_readback.queued = false;
+	scr_readback.retried = false;
+	scr_readback.request_id = 0;
+	scr_readback.submit_error = QR_SUCCESS;
+	Mem_Free (scr_readback.buf);
+	scr_readback.buf = NULL;
+	scr_readback.buf_cap = 0;
+}
+
 /*
 ==================
-SCR_ScreenShot_f -- asks the renderer for a PNG of the next frame in com_gamedir
+SCR_ScreenShot_f -- schedules an asynchronous frame readback screenshot in com_gamedir
 ==================
 */
 void SCR_ScreenShot_f (void)
 {
-	static int	screenshotNumber;
-	char		name[MAX_OSPATH];
-	char		pathname[MAX_OSPATH];
-	int			i;
-	QrResult	result;
+	static int     screenshotNumber;
+	char           name[MAX_OSPATH];
+	scr_shot_fmt_t fmt = SCR_FMT_PNG;
 
 	if (vulkan_globals.instance == NULL)
 	{
@@ -6121,30 +6360,37 @@ void SCR_ScreenShot_f (void)
 		return;
 	}
 
-	Sys_mkdir (com_gamedir);
-
-	for (i = screenshotNumber; i < screenshotNumber + 10000; i++)
+	GL_SynchronizeEndRenderingTask ();
+	if (scr_readback.queued || scr_readback.request_id != 0)
 	{
-		q_snprintf (name, sizeof (name), "screenshot%04d.png", i);
-
-		if (!COM_FileExists (name, NULL))
-		{
-			break;
-		}
+		Con_Printf ("screenshot: async capture already in progress\n");
+		return;
 	}
 
-	screenshotNumber = i + 1;
-
-	q_snprintf (pathname, sizeof (pathname), "%s/%s", com_gamedir, name);
-
-	result = qrRequestScreenshot (vulkan_globals.instance, pathname);
-
-	if (result == QR_SUCCESS)
+	if (Cmd_Argc () >= 2)
 	{
-		Con_Printf ("screenshot: %s\n", pathname);
+		if (!SCR_SanitizeScreenshotName (Cmd_Argv (1), name, sizeof (name), &fmt))
+		{
+			Con_Printf ("screenshot: invalid filename\n");
+			return;
+		}
 	}
 	else
 	{
-		Con_Printf ("screenshot: failed (%s)\n", qrGetResultDescription (result));
+		int i;
+		for (i = screenshotNumber; i < screenshotNumber + 10000; i++)
+		{
+			q_snprintf (name, sizeof (name), "screenshot%04d.png", i);
+			if (!COM_FileExists (name, NULL))
+				break;
+		}
+		screenshotNumber = i + 1;
 	}
+
+	Sys_mkdir (com_gamedir);
+	q_strlcpy (scr_readback.name, name, sizeof (scr_readback.name));
+	scr_readback.fmt = fmt;
+	scr_readback.retried = false;
+	scr_readback.submit_error = QR_SUCCESS;
+	scr_readback.queued = true;
 }

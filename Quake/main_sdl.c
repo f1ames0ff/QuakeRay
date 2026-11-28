@@ -37,6 +37,11 @@ static void Sys_InitSDL (void)
 
 	Sys_Printf ("Found SDL version %i.%i.%i\n", sdl_version->major, sdl_version->minor, sdl_version->patch);
 
+#if defined(__linux__)
+	if (SDL_getenv ("SDL_VIDEODRIVER") == NULL)
+		SDL_SetHint (SDL_HINT_VIDEODRIVER, "x11");
+#endif
+
 	if (SDL_Init (0) < 0)
 	{
 		Sys_Error ("Couldn't init SDL: %s", SDL_GetError ());

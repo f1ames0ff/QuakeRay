@@ -2774,7 +2774,7 @@ static void M_EffectsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&rt_bloom_quality, 2.0f);
 		Cvar_SetValueQuick (&rt_dof_near, 0.8f);
 		Cvar_SetValueQuick (&rt_tonemap_power, 0.9f);
-		Cvar_SetValueQuick (&rt_tonemap, 1.0f);
+		Cvar_SetValueQuick (&rt_tonemap, 4.0f);
 		Cvar_SetValueQuick (&rt_exposure_bias, 0.0f);
 		Cvar_SetValueQuick (&rt_ef_damage_strength, 0.5f);
 		Cvar_SetValueQuick (&rt_ef_liquid_strength, 0.51f);

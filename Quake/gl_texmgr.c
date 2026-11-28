@@ -1038,6 +1038,59 @@ static void TexMgr_PreMultiply32 (byte *in, size_t width, size_t height)
 	}
 }
 
+static void TexMgr_CleanOpaqueSpriteNoise (byte *rgba, size_t pixels)
+{
+	for (size_t i = 0; i < pixels; i++)
+	{
+		byte *px = rgba + i * 4u;
+		const int m = q_max ((int)px[0], q_max ((int)px[1], (int)px[2]));
+		if (m <= 6)
+		{
+			px[0] = 0;
+			px[1] = 0;
+			px[2] = 0;
+		}
+		else if (m < 18)
+		{
+			const float scale = (float)(m - 6) / 12.0f;
+			px[0] = (byte)((float)px[0] * scale + 0.5f);
+			px[1] = (byte)((float)px[1] * scale + 0.5f);
+			px[2] = (byte)((float)px[2] * scale + 0.5f);
+		}
+	}
+}
+
+static void TexMgr_PrepareOpaqueAlphaSprite (gltexture_t *glt, byte *rgba, int width, int height)
+{
+	if (glt->source_format != SRC_RGBA || !glt->owner || glt->owner->type != mod_sprite ||
+	    width <= 0 || height <= 0 || !rgba)
+		return;
+
+	const size_t pixels = (size_t)width * (size_t)height;
+	int          min_a = 255;
+	size_t       dark_count = 0;
+	qboolean     has_bright = false;
+
+	for (size_t i = 0; i < pixels; i++)
+	{
+		const byte *px = rgba + i * 4u;
+		const int   a = px[3];
+		const int   m = q_max ((int)px[0], q_max ((int)px[1], (int)px[2]));
+		if (a < min_a)
+			min_a = a;
+		if (m <= 18)
+			dark_count++;
+		if (m >= 32)
+			has_bright = true;
+	}
+
+	if (min_a == 255 && has_bright && dark_count * 10u >= pixels)
+	{
+		glt->rtopaquealpha = true;
+		TexMgr_CleanOpaqueSpriteNoise (rgba, pixels);
+	}
+}
+
 /*
 ================
 TexMgr_LoadImage32 -- handles 32bit source data
@@ -1046,6 +1099,8 @@ TexMgr_LoadImage32 -- handles 32bit source data
 static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 {
 	GL_DeleteTexture (glt);
+	glt->rtopaquealpha = false;
+	TexMgr_PrepareOpaqueAlphaSprite (glt, (byte *)data, (int)glt->width, (int)glt->height);
 
 	// do this before any rescaling
 	if (glt->flags & TEXPREF_PREMULTIPLY)
@@ -1329,10 +1384,10 @@ static void TexMgr_EmissiveCone (const rt_material_t *mat, float *angleInner, fl
 	*angleInner = (float)((outerDeg - softDeg) * M_PI_DIV_180);
 }
 
-static void TexMgr_SetAuxMaterial (gltexture_t *glt, QrMaterial *target, const byte *pixels)
+static void TexMgr_SetAuxMaterial (gltexture_t *glt, QrMaterial *target, const byte *pixels, int width, int height)
 {
 	const QrMaterial old = *target;
-	const QrExtent2D size = {glt->width, glt->height};
+	const QrExtent2D size = {(uint32_t)q_max (1, width), (uint32_t)q_max (1, height)};
 	SDL_LockMutex (rtspecial_mutex);
 	if (!pixels)
 	{
@@ -1673,36 +1728,171 @@ static void TexMgr_BuildColorEmissiveBuffers (const rt_material_t *mat, const by
 	Mem_Free (dist);
 }
 
-static void TexMgr_SampleSssTextureLuma (const rt_material_t *mat, int tw, int th, float *combined)
+typedef struct texmgr_raw_slot_s
 {
-	int   sw = 0, sh = 0;
-	byte *sssRaw = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_SSS, &sw, &sh);
-	const int npix = tw * th;
+	byte *rgba;
+	int   w;
+	int   h;
+} texmgr_raw_slot_t;
 
-	if (!sssRaw)
+typedef struct texmgr_raw_slots_s
+{
+	texmgr_raw_slot_t base;
+	texmgr_raw_slot_t norm;
+	texmgr_raw_slot_t height;
+	texmgr_raw_slot_t emis;
+	texmgr_raw_slot_t gloss;
+	texmgr_raw_slot_t overlay;
+	texmgr_raw_slot_t sss;
+} texmgr_raw_slots_t;
+
+static void TexMgr_LoadRawSlot (const rt_material_t *mat, int slot, qboolean enabled,
+                                texmgr_raw_slot_t *out)
+{
+	out->rgba = NULL;
+	out->w = 0;
+	out->h = 0;
+	if (!enabled)
+		return;
+	out->rgba = TexMgr_LoadMaterialTexture (mat, slot, &out->w, &out->h);
+}
+
+static void TexMgr_FreeRawSlots (texmgr_raw_slots_t *slots)
+{
+	texmgr_raw_slot_t *all[] = {&slots->base, &slots->norm, &slots->height,
+	                            &slots->emis, &slots->gloss, &slots->overlay, &slots->sss};
+	for (size_t i = 0; i < countof (all); i++)
 	{
+		if (all[i]->rgba)
+		{
+			Mem_Free (all[i]->rgba);
+			all[i]->rgba = NULL;
+		}
+	}
+}
+
+static void TexMgr_LoadAllRawSlots (const gltexture_t *glt, const rt_material_t *mat,
+                                    qboolean allowHeight, texmgr_raw_slots_t *raw)
+{
+	const texmgr_raw_slots_t empty = {0};
+	*raw = empty;
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_BASE, true, &raw->base);
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_NORMALS, true, &raw->norm);
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_HEIGHT, allowHeight, &raw->height);
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_EMISSIVE, mat->emissive_enabled, &raw->emis);
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_GLOSS, mat->gloss_enabled, &raw->gloss);
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_OVERLAY, true, &raw->overlay);
+	const qboolean loadSss = glt->rtsss && mat->filename_sss[0] != '\0';
+	TexMgr_LoadRawSlot (mat, RT_MAT_TEX_SSS, loadSss, &raw->sss);
+	if (loadSss && !raw->sss.rgba)
 		Con_Printf ("RT: material '%s': texture_sss '%s' could not be loaded\n",
 		            mat->name, mat->filename_sss);
-		return;
+}
+
+static void TexMgr_ComputeBakeDims (const texmgr_raw_slots_t *slots, int baseW, int baseH,
+                                    qboolean activeFullbright, int *outW, int *outH)
+{
+	int w = slots->base.rgba ? slots->base.w : baseW;
+	int h = slots->base.rgba ? slots->base.h : baseH;
+	const texmgr_raw_slot_t *extra[] = {&slots->norm, &slots->height, &slots->gloss,
+	                                    &slots->emis, &slots->overlay, &slots->sss};
+	for (size_t i = 0; i < countof (extra); i++)
+	{
+		if (extra[i]->rgba && extra[i]->w > 0 && extra[i]->h > 0)
+		{
+			w = q_max (w, extra[i]->w);
+			h = q_max (h, extra[i]->h);
+		}
 	}
+	if ((slots->emis.rgba != NULL || activeFullbright) && w > 0 && h > 0)
+	{
+		const int minDim = q_min (w, h);
+		if (minDim < 256)
+		{
+			const double upScale = 256.0 / (double)minDim;
+			w = (int)((double)w * upScale + 0.5);
+			h = (int)((double)h * upScale + 0.5);
+		}
+	}
+	const int maxDim = q_max (w, h);
+	if (maxDim > 2048)
+	{
+		const double scale = 2048.0 / (double)maxDim;
+		w = q_max (1, (int)((double)w * scale + 0.5));
+		h = q_max (1, (int)((double)h * scale + 0.5));
+	}
+	*outW = q_max (1, w);
+	*outH = q_max (1, h);
+}
 
-	byte *sssBuf = (byte *)Mem_Alloc ((size_t)npix * 4);
-	TexMgr_ResizeRgba (sssRaw, sw, sh, sssBuf, tw, th);
-	Mem_Free (sssRaw);
+static byte *TexMgr_FinishSlotBuf (texmgr_raw_slot_t *slot, int tw, int th)
+{
+	if (!slot->rgba)
+		return NULL;
+	if (slot->w == tw && slot->h == th)
+	{
+		byte *owned = slot->rgba;
+		slot->rgba = NULL;
+		return owned;
+	}
+	byte *resized = (byte *)Mem_Alloc ((size_t)tw * (size_t)th * 4u);
+	TexMgr_ResizeRgba (slot->rgba, slot->w, slot->h, resized, tw, th);
+	Mem_Free (slot->rgba);
+	slot->rgba = NULL;
+	return resized;
+}
 
+static byte *TexMgr_ProcessOverlaySlot (texmgr_raw_slot_t *slot, const rt_material_t *mat,
+                                        int tw, int th)
+{
+	if (!slot->rgba)
+		return NULL;
+	const int ln = slot->w * slot->h;
+	unsigned  covMax = 0;
+	unsigned long long covSum = 0;
+	for (int i = 0; i < ln; i++)
+	{
+		const unsigned a = slot->rgba[i * 4 + 3];
+		slot->rgba[i * 4 + 0] = (byte)((slot->rgba[i * 4 + 0] * a + 127) / 255);
+		slot->rgba[i * 4 + 1] = (byte)((slot->rgba[i * 4 + 1] * a + 127) / 255);
+		slot->rgba[i * 4 + 2] = (byte)((slot->rgba[i * 4 + 2] * a + 127) / 255);
+		covSum += a;
+		if (a > covMax)
+			covMax = a;
+	}
+	if (covMax == 0)
+		Con_Printf ("RT: material '%s': texture_overlay '%s' is fully transparent; the overlay paints nothing\n",
+		            mat->name, mat->filename_overlay);
+	else if (ln > 0 && covSum / (unsigned long long)ln < 13)
+		Con_Printf ("RT: material '%s': texture_overlay '%s' covers only %.1f%% on average; the overlay will barely show\n",
+		            mat->name, mat->filename_overlay,
+		            ((double)covSum / (double)ln) * 100.0 / 255.0);
+	return TexMgr_FinishSlotBuf (slot, tw, th);
+}
+
+static byte *TexMgr_ResizeExternalRgba (const byte *src, int sw, int sh, int tw, int th)
+{
+	if (!src || (sw == tw && sh == th))
+		return NULL;
+	byte *out = (byte *)Mem_Alloc ((size_t)tw * (size_t)th * 4u);
+	TexMgr_ResizeRgba (src, sw, sh, out, tw, th);
+	return out;
+}
+
+static void TexMgr_FillSssLumaFromBuf (const byte *sssBuf, int npix, float *combined)
+{
 	for (int i = 0; i < npix; i++)
 	{
 		combined[i] = (0.2126f * sssBuf[i * 4 + 0] +
 		               0.7152f * sssBuf[i * 4 + 1] +
 		               0.0722f * sssBuf[i * 4 + 2]) / 255.0f;
 	}
-	Mem_Free (sssBuf);
 }
 
 static byte *TexMgr_BuildSssMaskBytes (const rt_material_t *mat, const byte *baseSrc,
-                                       int tw, int th, qboolean rtsss)
+                                       const byte *sssBuf, int tw, int th, qboolean rtsss)
 {
-	const qboolean hasTex = mat->filename_sss[0] != '\0';
+	const qboolean hasTex = sssBuf != NULL;
 	const qboolean hasBlocks = mat->has_sss_blocks && mat->sss_block_count > 0;
 	const int      npix = tw * th;
 	float         *combined;
@@ -1716,7 +1906,7 @@ static byte *TexMgr_BuildSssMaskBytes (const rt_material_t *mat, const byte *bas
 		combined[i] = 0.0f;
 
 	if (hasTex)
-		TexMgr_SampleSssTextureLuma (mat, tw, th, combined);
+		TexMgr_FillSssLumaFromBuf (sssBuf, npix, combined);
 
 	if (hasBlocks)
 	{
@@ -1747,24 +1937,6 @@ static byte *TexMgr_BuildSssMaskBytes (const rt_material_t *mat, const byte *bas
 	}
 	Mem_Free (combined);
 	return out;
-}
-
-static byte *TexMgr_LoadOptionalMaterialBuf (const rt_material_t *mat, int slot, qboolean enabled,
-                                             int tw, int th)
-{
-	int   w = 0, h = 0;
-	byte *raw;
-	byte *resized;
-
-	if (!enabled)
-		return NULL;
-	raw = TexMgr_LoadMaterialTexture (mat, slot, &w, &h);
-	if (!raw)
-		return NULL;
-	resized = (byte *)Mem_Alloc ((size_t)tw * (size_t)th * 4);
-	TexMgr_ResizeRgba (raw, w, h, resized, tw, th);
-	Mem_Free (raw);
-	return resized;
 }
 
 static float TexMgr_ResolvePixelRoughness (const gltexture_t *glt, const rt_material_t *mat,
@@ -1820,8 +1992,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	rt_material_t *mat = RT_MAT_Find (glt->name);
 	if (!mat)
 	{
-		TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, NULL);
-		TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, NULL);
+		TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, NULL, (int)glt->width, (int)glt->height);
+		TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, NULL, (int)glt->width, (int)glt->height);
 		// A material the editor dropped (Cancel/Exit of a texture that had none
 		// in yaml) must stop being one at once: the reload is what notices it is
 		// gone, and every field below is only ever set here. The same block a
@@ -1832,6 +2004,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		glt->rtexactnormals = false;
 		glt->rtforcerasterize = false;
 		glt->rtalphatest = false;
+	glt->rtopaquealpha = false;
 		glt->rtglass = false;
 		glt->rtglassior = 0.0f;
 		glt->rtglassthickness = 2.0f;
@@ -1895,63 +2068,37 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	glt->rtuvoffset[0] = mat->texture_offset_u;
 	glt->rtuvoffset[1] = mat->texture_offset_v;
 
-	const int tw = glt->width;
-	const int th = glt->height;
-	const int npix = tw * th;
-
 	const qboolean allowHeight = !mat->material_glass && !glt->rtwater && !glt->rtsss && mat->filename_height[0] != '\0';
-	byte *baseBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_BASE, true, tw, th);
-	byte *normBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_NORMALS, true, tw, th);
-	byte *heightBuf  = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_HEIGHT, allowHeight, tw, th);
-	byte *emisBuf    = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_EMISSIVE, mat->emissive_enabled, tw, th);
-	glt->rtemissivetex = (emisBuf != NULL);
-	byte *glossBuf   = TexMgr_LoadOptionalMaterialBuf (mat, RT_MAT_TEX_GLOSS, mat->gloss_enabled, tw, th);
-	int lw = 0, lh = 0;
-	byte *overlayTex = TexMgr_LoadMaterialTexture (mat, RT_MAT_TEX_OVERLAY, &lw, &lh);
-	int overlayPixels = 0;
-	unsigned overlayCovMax = 0;
-	unsigned long long overlayCovSum = 0;
-	byte *overlayBuf = NULL;
-	glt->rtparallaxscale = (heightBuf && mat->parallax_scale > 0.0f) ? CLAMP (0.0f, mat->parallax_scale, 0.25f) : 0.0f;
-	if (overlayTex)
-	{
-		const int ln = lw * lh;
-		for (int i = 0; i < ln; i++)
-		{
-			const unsigned a = overlayTex[i * 4 + 3];
-			overlayTex[i * 4 + 0] = (byte)((overlayTex[i * 4 + 0] * a + 127) / 255);
-			overlayTex[i * 4 + 1] = (byte)((overlayTex[i * 4 + 1] * a + 127) / 255);
-			overlayTex[i * 4 + 2] = (byte)((overlayTex[i * 4 + 2] * a + 127) / 255);
-			overlayCovSum += a;
-			if (a > overlayCovMax)
-				overlayCovMax = a;
-		}
-		overlayPixels = ln;
-		overlayBuf = (byte *)Mem_Alloc (npix * 4);
-		TexMgr_ResizeRgba (overlayTex, lw, lh, overlayBuf, tw, th);
-		Mem_Free (overlayTex);
+	texmgr_raw_slots_t raw;
+	TexMgr_LoadAllRawSlots (glt, mat, allowHeight, &raw);
 
-		if (overlayCovMax == 0)
-			Con_Printf ("RT: material '%s': texture_overlay '%s' is fully transparent; the overlay paints nothing\n",
-			            mat->name, mat->filename_overlay);
-		else if (overlayPixels && overlayCovSum / (unsigned long long)overlayPixels < 13)
-			Con_Printf ("RT: material '%s': texture_overlay '%s' covers only %.1f%% on average; the overlay will barely show\n",
-			            mat->name, mat->filename_overlay,
-			            (double)(overlayCovSum / (unsigned long long)overlayPixels) * 100.0 / 255.0);
-	}
-
-	if (!baseBuf && !albedoFallback)
+	if (!raw.base.rgba && !albedoFallback)
 	{
 		glt->rtparallaxscale = 0.0f;
-		TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, NULL);
-		TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, NULL);
-		if (normBuf) Mem_Free (normBuf);
-		if (heightBuf) Mem_Free (heightBuf);
-		if (emisBuf) Mem_Free (emisBuf);
-		if (glossBuf) Mem_Free (glossBuf);
-		if (overlayBuf) Mem_Free (overlayBuf);
+		TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, NULL, (int)glt->width, (int)glt->height);
+		TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, NULL, (int)glt->width, (int)glt->height);
+		TexMgr_FreeRawSlots (&raw);
 		return false;
 	}
+
+	const qboolean activeFullbrightWanted = mat->emissive_enabled && fullbrightOverride != NULL;
+	int tw = (int)glt->width;
+	int th = (int)glt->height;
+	TexMgr_ComputeBakeDims (&raw, (int)glt->width, (int)glt->height, activeFullbrightWanted, &tw, &th);
+	const int npix = tw * th;
+
+	byte *baseBuf    = TexMgr_FinishSlotBuf (&raw.base, tw, th);
+	byte *normBuf    = TexMgr_FinishSlotBuf (&raw.norm, tw, th);
+	byte *heightBuf  = TexMgr_FinishSlotBuf (&raw.height, tw, th);
+	byte *emisBuf    = TexMgr_FinishSlotBuf (&raw.emis, tw, th);
+	glt->rtemissivetex = (emisBuf != NULL);
+	byte *glossBuf   = TexMgr_FinishSlotBuf (&raw.gloss, tw, th);
+	byte *overlayBuf = TexMgr_ProcessOverlaySlot (&raw.overlay, mat, tw, th);
+	byte *sssTexBuf  = TexMgr_FinishSlotBuf (&raw.sss, tw, th);
+	byte *baseFallbackResized = !baseBuf ? TexMgr_ResizeExternalRgba ((const byte *)albedoFallback, (int)glt->width, (int)glt->height, tw, th) : NULL;
+	const byte *baseAlbedoSrc = baseBuf ? baseBuf : (baseFallbackResized ? baseFallbackResized : (const byte *)albedoFallback);
+	byte *fbResized = activeFullbrightWanted ? TexMgr_ResizeExternalRgba (fullbrightOverride, (int)glt->width, (int)glt->height, tw, th) : NULL;
+	glt->rtparallaxscale = (heightBuf && mat->parallax_scale > 0.0f) ? CLAMP (0.0f, mat->parallax_scale, 0.25f) : 0.0f;
 
 	qboolean baseHasAlpha = false;
 	if (baseBuf)
@@ -1979,10 +2126,10 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 	}
 
-	byte *albedo = (byte *)Mem_Alloc (npix * 4);
-	byte *rme    = (byte *)Mem_Alloc (npix * 4);
-	byte *normal = (byte *)Mem_Alloc (npix * 4);
-	byte *rasterAlbedo = overlayBuf && mat->material_glass ? (byte *)Mem_Alloc (npix * 4) : NULL;
+	byte *albedo = (byte *)Mem_Alloc ((size_t)npix * 4u);
+	byte *rme    = (byte *)Mem_Alloc ((size_t)npix * 4u);
+	byte *normal = (byte *)Mem_Alloc ((size_t)npix * 4u);
+	byte *rasterAlbedo = overlayBuf && mat->material_glass ? (byte *)Mem_Alloc ((size_t)npix * 4u) : NULL;
 
 	const float baseFactor = (mat->base_factor >= 0.0f) ? mat->base_factor : 1.0f;
 
@@ -2007,7 +2154,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	const qboolean has_luma_key = mat->emissive_enabled && (mat->filename_emissive[0] != '\0');
 	const qboolean use_color_emissive = mat->emissive_enabled && mat->has_color_emissive && mat->color_emissive_count > 0 && !has_luma_key;
-	const byte *activeFullbright = mat->emissive_enabled ? fullbrightOverride : NULL;
+	const byte *activeFullbright = mat->emissive_enabled ? (fbResized ? fbResized : fullbrightOverride) : NULL;
 	if (has_luma_key && !emisBuf)
 		Con_Printf ("RT: material '%s': texture_emissive '%s' could not be loaded; using no emissive mask\n",
 		            mat->name, mat->filename_emissive);
@@ -2065,21 +2212,20 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (use_color_emissive && !emisBuf)
 	{
 		texmgr_emis_bufs_t bufs = {0};
-		const byte *baseSrc = baseBuf ? baseBuf : (const byte *)albedoFallback;
 
-		TexMgr_BuildColorEmissiveBuffers (mat, baseSrc, tw, th, emisBlendCode, &bufs);
+		TexMgr_BuildColorEmissiveBuffers (mat, baseAlbedoSrc, tw, th, emisBlendCode, &bufs);
 		colorEmis = bufs.colorEmis;
 		colorBlend = bufs.colorBlend;
 		colorDist = bufs.colorDist;
 		colorRaw = bufs.colorRaw;
 	}
 
-	byte *sssMask = TexMgr_BuildSssMaskBytes (mat, baseBuf ? baseBuf : (const byte *)albedoFallback,
+	byte *sssMask = TexMgr_BuildSssMaskBytes (mat, baseAlbedoSrc, sssTexBuf,
 	                                          tw, th, glt->rtsss);
 
 	for (int i = 0; i < npix; i++)
 	{
-		const byte *src = baseBuf ? baseBuf + i * 4 : (byte *)albedoFallback + i * 4;
+		const byte *src = baseAlbedoSrc + i * 4;
 		int r = (int)CLAMP (0.0f, src[0] * baseFactor, 255.0f);
 		int g = (int)CLAMP (0.0f, src[1] * baseFactor, 255.0f);
 		int b = (int)CLAMP (0.0f, src[2] * baseFactor, 255.0f);
@@ -2231,8 +2377,8 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		}
 		TexMgr_AlphaEdgeFix (overlayBuf, tw, th);
 	}
-	TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, mat->material_glass ? overlayBuf : NULL);
-	TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, rasterAlbedo);
+	TexMgr_SetAuxMaterial (glt, &glt->rtoverlaymaterial, mat->material_glass ? overlayBuf : NULL, tw, th);
+	TexMgr_SetAuxMaterial (glt, &glt->rtrastermaterial, rasterAlbedo, tw, th);
 	if (rasterAlbedo) Mem_Free (rasterAlbedo);
 
 	if (colorEmis)  Mem_Free (colorEmis);
@@ -2241,11 +2387,14 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 	if (colorRaw)   Mem_Free (colorRaw);
 
 	if (baseBuf) Mem_Free (baseBuf);
+	if (baseFallbackResized) Mem_Free (baseFallbackResized);
+	if (fbResized) Mem_Free (fbResized);
 	if (normBuf) Mem_Free (normBuf);
 	if (heightBuf) Mem_Free (heightBuf);
 	if (emisBuf) Mem_Free (emisBuf);
 	if (glossBuf) Mem_Free (glossBuf);
 	if (overlayBuf) Mem_Free (overlayBuf);
+	if (sssTexBuf) Mem_Free (sssTexBuf);
 	if (sssMask) Mem_Free (sssMask);
 
 	if (emissR > 0.0f || emissG > 0.0f || emissB > 0.0f)
@@ -2292,7 +2441,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 		VectorScale (glt->rtemissivecolorraw, gain, glt->rtemissivecolorraw);
 	}
 
-	glt->rtislight = mat->is_light;
+	glt->rtislight = mat->emissive_enabled && mat->is_light;
 	glt->rtlightgain = lightBright;
 
 	extern cvar_t rt_mat_debug;
@@ -2383,7 +2532,7 @@ static qboolean TexMgr_ApplyMaterialFromMatInternal (gltexture_t *glt, unsigned 
 
 	QrMaterialCreateInfo info = {
 		.flags = TexMgr_GetRtCreateFlags (glt),
-		.size = {tw, th},
+		.size = {(uint32_t)tw, (uint32_t)th},
 		.textures =
 			{
 				.pDataAlbedoAlpha = albedo,
@@ -2622,6 +2771,7 @@ gltexture_t *TexMgr_LoadImage (
 	glt->rtexactnormals = false;
 	glt->rtforcerasterize = false;
 	glt->rtalphatest = false;
+	glt->rtopaquealpha = false;
 	glt->rtglass = false;
 	glt->rtglassior = 0.0f;
 	glt->rtglassthickness = 2.0f;
@@ -3461,8 +3611,8 @@ static void GL_DeleteTexture (gltexture_t *texture)
 	}
 	if (!texmgr_live_reload)
 	{
-		TexMgr_SetAuxMaterial (texture, &texture->rtoverlaymaterial, NULL);
-		TexMgr_SetAuxMaterial (texture, &texture->rtrastermaterial, NULL);
+		TexMgr_SetAuxMaterial (texture, &texture->rtoverlaymaterial, NULL, (int)texture->width, (int)texture->height);
+		TexMgr_SetAuxMaterial (texture, &texture->rtrastermaterial, NULL, (int)texture->width, (int)texture->height);
 	}
 
 	if (texture->rtlightmaterial != QR_NO_MATERIAL && !texmgr_live_reload)

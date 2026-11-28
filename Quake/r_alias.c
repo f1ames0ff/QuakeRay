@@ -123,6 +123,28 @@ static void LerpPosition(float* dst, const float* src1, const float* src2, float
     }
 }
 
+static void LerpNormal(float* dst, const float* src1, const float* src2, float blend)
+{
+    float nx = Lerp(src1[0], src2[0], blend);
+    float ny = Lerp(src1[1], src2[1], blend);
+    float nz = Lerp(src1[2], src2[2], blend);
+    const float len_sq = nx * nx + ny * ny + nz * nz;
+
+    if (len_sq > 1e-12f)
+    {
+        const float inv_len = 1.0f / sqrtf(len_sq);
+        dst[0] = nx * inv_len;
+        dst[1] = ny * inv_len;
+        dst[2] = nz * inv_len;
+    }
+    else
+    {
+        dst[0] = 0.0f;
+        dst[1] = 0.0f;
+        dst[2] = 1.0f;
+    }
+}
+
 static const QrVertex*
 GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, float blend, int cluster)
 {
@@ -156,6 +178,7 @@ GetPoseVertices(const qmodel_t* m, const aliashdr_t* hdr, int pose1, int pose2, 
         const QrVertex* src2 = &v_pose2[i];
 
         LerpPosition(dst->position, src1->position, src2->position, blend);
+        LerpNormal(dst->normal, src1->normal, src2->normal, blend);
 
         if (cluster > 0)
             dst->cluster = (uint32_t)cluster;
@@ -589,7 +612,7 @@ else
 			    (tx && tx->rtalphatest ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 			    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 			    (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
-			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT ),
+			    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : 0),
 			.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 			.passThroughType =
 			    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
@@ -764,7 +787,7 @@ static void R_DrawEnhancedModel (entity_t *e, aliashdr_t *paliashdr, int entuniq
 				    ((tx && tx->rtalphatest) ? QR_GEOMETRY_UPLOAD_ALPHA_TRANSMISSION_BIT : 0) |
 				    (is_glass && alphatest ? QR_GEOMETRY_UPLOAD_GLASS_CUTOUT_BIT : 0) |
 				    (RT_UV_TRANSFORM_ACTIVE (tx) ? QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT : 0) |
-				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT),
+				    (exact_normals ? QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT : 0),
 				.geomType = QR_GEOMETRY_TYPE_DYNAMIC,
 				.passThroughType =
 				    is_invis ? QR_GEOMETRY_PASS_THROUGH_TYPE_GLASS_REFLECT_REFRACT :
@@ -1459,7 +1482,7 @@ static QrGeometryPassThroughType RT_StaticAliasPassThroughType (qboolean is_glas
 
 static uint32_t RT_StaticAliasUploadFlags (const gltexture_t *tx, qboolean is_glass, qboolean alphatest)
 {
-	uint32_t flags = QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT;
+	uint32_t flags = 0;
 	if (!tx)
 		return flags;
 	if (tx->rtalphatest)
@@ -1470,7 +1493,7 @@ static uint32_t RT_StaticAliasUploadFlags (const gltexture_t *tx, qboolean is_gl
 	    tx->rtuvoffset[0] != 0.0f || tx->rtuvoffset[1] != 0.0f)
 		flags |= QR_GEOMETRY_UPLOAD_TEXCOORD_TRANSFORM_BIT;
 	if (tx->rtexactnormals)
-		flags = (flags & ~QR_GEOMETRY_UPLOAD_GENERATE_NORMALS_BIT) | QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT;
+		flags |= QR_GEOMETRY_UPLOAD_EXACT_NORMALS_BIT;
 	return flags;
 }
 

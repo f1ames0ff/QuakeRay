@@ -611,6 +611,183 @@ static byte *CopyFlipped (const byte *data, int width, int height, int bpp)
 	return flipped;
 }
 
+static void Image_PngStoreU32BE (byte out[4], uint32_t v)
+{
+	out[0] = (byte)((v >> 24) & 0xFFu);
+	out[1] = (byte)((v >> 16) & 0xFFu);
+	out[2] = (byte)((v >> 8) & 0xFFu);
+	out[3] = (byte)(v & 0xFFu);
+}
+
+static uint32_t Image_PngCrcUpdate (uint32_t crc, const byte *data, size_t size)
+{
+	for (size_t i = 0; i < size; i++)
+	{
+		crc ^= (uint32_t)data[i];
+		for (int bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+	}
+	return crc;
+}
+
+static uint32_t Image_PngAdler32 (const byte *data, size_t size)
+{
+	uint32_t a = 1u;
+	uint32_t b = 0u;
+	for (size_t i = 0; i < size; i++)
+	{
+		a = (a + (uint32_t)data[i]) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	return (b << 16) | a;
+}
+
+static void Image_CopyBytes (byte *dst, const byte *src, size_t len)
+{
+	for (size_t i = 0; i < len; i++)
+		dst[i] = src[i];
+}
+
+static qboolean Image_PngWriteChunk (FILE *f, const char type[4], const byte *data, uint32_t len)
+{
+	byte header[8];
+	byte crc_bytes[4];
+	const byte type_bytes[4] = {(byte)type[0], (byte)type[1], (byte)type[2], (byte)type[3]};
+
+	Image_PngStoreU32BE (header, len);
+	Image_CopyBytes (header + 4, type_bytes, 4);
+
+	uint32_t crc = Image_PngCrcUpdate (0xFFFFFFFFu, type_bytes, 4);
+	if (len > 0 && data != NULL)
+		crc = Image_PngCrcUpdate (crc, data, (size_t)len);
+	Image_PngStoreU32BE (crc_bytes, crc ^ 0xFFFFFFFFu);
+
+	if (fwrite (header, 1, sizeof (header), f) != sizeof (header))
+		return false;
+	if (len > 0 && data != NULL && fwrite (data, 1, (size_t)len, f) != (size_t)len)
+		return false;
+	return fwrite (crc_bytes, 1, sizeof (crc_bytes), f) == sizeof (crc_bytes);
+}
+
+static byte *Image_PngBuildIdat (const byte *pixels, int width, int height, int bpp_bytes, size_t *out_size)
+{
+	const size_t row_bytes = (size_t)width * (size_t)bpp_bytes;
+	const size_t raw_size = (size_t)height * (1u + row_bytes);
+	byte        *raw = (byte *)Mem_Alloc (raw_size);
+	if (!raw)
+		return NULL;
+
+	for (int y = 0; y < height; y++)
+	{
+		byte *dst = raw + (size_t)y * (1u + row_bytes);
+		dst[0] = 0u;
+		Image_CopyBytes (dst + 1, pixels + (size_t)y * row_bytes, row_bytes);
+	}
+
+	const size_t block_count = (raw_size + 65534u) / 65535u;
+	const size_t idat_cap = 2u + block_count * 5u + raw_size + 4u;
+	if (idat_cap > 0xFFFFFFFFu)
+	{
+		Mem_Free (raw);
+		return NULL;
+	}
+
+	byte *idat = (byte *)Mem_Alloc (idat_cap);
+	if (!idat)
+	{
+		Mem_Free (raw);
+		return NULL;
+	}
+
+	size_t pos = 0;
+	idat[pos++] = 0x78u;
+	idat[pos++] = 0x01u;
+
+	size_t offset = 0;
+	while (offset < raw_size)
+	{
+		const size_t   rem = raw_size - offset;
+		const size_t   block = rem > 65535u ? 65535u : rem;
+		const uint16_t length = (uint16_t)block;
+		const uint16_t inverse = (uint16_t)(~length);
+
+		idat[pos++] = (offset + block >= raw_size) ? 1u : 0u;
+		idat[pos++] = (byte)(length & 0xFFu);
+		idat[pos++] = (byte)((length >> 8) & 0xFFu);
+		idat[pos++] = (byte)(inverse & 0xFFu);
+		idat[pos++] = (byte)((inverse >> 8) & 0xFFu);
+		Image_CopyBytes (idat + pos, raw + offset, block);
+		pos += block;
+		offset += block;
+	}
+
+	Image_PngStoreU32BE (idat + pos, Image_PngAdler32 (raw, raw_size));
+	pos += 4u;
+	Mem_Free (raw);
+	*out_size = pos;
+	return idat;
+}
+
+static qboolean Image_PngWriteFile (const char *pathname, int width, int height, int bpp,
+                                    const byte *idat, uint32_t idat_size)
+{
+	FILE *f = fopen (pathname, "wb");
+	if (!f)
+		return false;
+
+	const byte signature[8] = {137u, 80u, 78u, 71u, 13u, 10u, 26u, 10u};
+	byte       ihdr[13] = {0};
+	Image_PngStoreU32BE (ihdr, (uint32_t)width);
+	Image_PngStoreU32BE (ihdr + 4, (uint32_t)height);
+	ihdr[8] = 8u;
+	ihdr[9] = (byte)(bpp == 32 ? 6u : 2u);
+
+	qboolean ok = fwrite (signature, 1, sizeof (signature), f) == sizeof (signature);
+	ok = ok && Image_PngWriteChunk (f, "IHDR", ihdr, (uint32_t)sizeof (ihdr));
+	ok = ok && Image_PngWriteChunk (f, "IDAT", idat, idat_size);
+	ok = ok && Image_PngWriteChunk (f, "IEND", NULL, 0u);
+	if (fflush (f) != 0)
+		ok = false;
+	if (fclose (f) != 0)
+		ok = false;
+	return ok;
+}
+
+/*
+============
+Image_WritePNG -- writes an uncompressed PNG (stored DEFLATE) to com_gamedir
+
+returns true if successful
+============
+*/
+qboolean Image_WritePNG (const char *name, byte *data, int width, int height, int bpp, qboolean upsidedown)
+{
+	char   pathname[MAX_OSPATH];
+	byte  *flipped;
+	byte  *idat;
+	size_t idat_size = 0;
+
+	if (!(bpp == 32 || bpp == 24) || width <= 0 || height <= 0 || !data)
+		return false;
+
+	Sys_mkdir (com_gamedir); // if we've switched to a nonexistant gamedir, create it now so we don't crash
+	q_snprintf (pathname, sizeof (pathname), "%s/%s", com_gamedir, name);
+
+	flipped = upsidedown ? data : CopyFlipped (data, width, height, bpp);
+	if (!flipped)
+		return false;
+
+	idat = Image_PngBuildIdat (flipped, width, height, bpp / 8, &idat_size);
+	if (!upsidedown)
+		Mem_Free (flipped);
+	if (!idat)
+		return false;
+
+	const qboolean ok = Image_PngWriteFile (pathname, width, height, bpp, idat, (uint32_t)idat_size);
+	Mem_Free (idat);
+	return ok;
+}
+
 /*
 ============
 Image_WriteJPG -- writes using stb_image_write
